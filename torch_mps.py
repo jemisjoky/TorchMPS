@@ -27,7 +27,7 @@ class SingleCore():
 
 
 class MPSClassifier():
-    def __init__(self, size, D, d=2, num_labels=10):
+    def __init__(self, size, D, d=2, num_labels=10, bc='open'):
         """
         Define variables for holding our MPS cores (trainable)
         """
@@ -40,6 +40,9 @@ class MPSClassifier():
         self.d = d
         # Number of distinct labels for our classification
         self.num_labels = num_labels
+        # Type of boundary conditions for our MPS
+        # (Either 'open' or 'periodic')
+        self.bc = bc
         # Shape of single MPS core
         self.shape = [D, D, d]
         # List of MPS cores, initialized randomly
@@ -116,7 +119,7 @@ class MPSClassifier():
         """
 
 ### TESTING STUFF BELOW ###
-my_classifier = MPSClassifier(size=4, D=2, d=2, num_labels=10)
+my_classifier = MPSClassifier(size=4, D=2)
 
 input_vecs = torch.FloatTensor([0, 1])
 input_vecs = input_vecs.unsqueeze(0).expand([4, -1])
