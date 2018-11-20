@@ -70,7 +70,6 @@ class MPSClassifier(torch.nn.Module):
         # the output logit score for our classification labels
         self.label_core = SingleCore([D, D, num_labels])
 
-
     def _contract_batch_input(self, batch_input):
         """
         Contract batch of input data with MPS cores and return 
@@ -84,6 +83,7 @@ class MPSClassifier(torch.nn.Module):
         core_mats = [core.as_mat() for core in self.cores]
         core_mats = torch.stack(core_mats).unsqueeze(0)
         core_mats = core_mats.expand([batch_size, size, D*D, d])
+
         core_mats = core_mats.contiguous()
         batch_input = batch_input.contiguous()
 
@@ -93,13 +93,43 @@ class MPSClassifier(torch.nn.Module):
         batch_mats = torch.bmm(core_mats, batch_input)
         return batch_mats.view([batch_size, size, D, D])
 
+    def embedding_map(self, datum):
+        """
+        Take a single input and embed it into a local
+        feature space of dimension d.
+
+        I'm using a particularly simple affine embedding 
+        map of the form x --> [1-x, x]
+        """
+        if self.d != 2:
+            raise ValueError("Embedding map needs d=2, but "
+                "self.d={}".format(self.d))
+        else:
+            return torch.Tensor([1-datum, datum])
+
+    def _embed_batch_input(self, batch_input):
+        """
+        Take batch input data and embed each data point into a 
+        local feature space of dimension d using embedding_map
+        """
+        batch_size = batch_input.shape[0]
+        size = batch_input.shape[1]
+        batch_input = batch_input.view(batch_size*size)
+        
+        embed_data = [self.embedding_map(dat).unsqueeze(0) 
+                      for dat in batch_input]
+        embed_data = torch.stack(embed_data, 0)
+
+        return embed_data.view([batch_size, size, self.d])
+
     def forward(self, batch_input):
         """
         Evaluate our classifier on a batch of input data 
         and return a vector of logit scores over labels
 
-        batch_input must be formatted as a torch tensor of 
-        size [batch_size, input_size, d]
+        batch_input must be formatted as a torch tensor of size 
+        [batch_size, input_size], where every entry lies in
+        the interval [0, 1]
         """
         size, D, d = self.size, self.D, self.d
         num_labels = self.num_labels
@@ -107,15 +137,13 @@ class MPSClassifier(torch.nn.Module):
 
         batch_size = batch_input.shape[0]
         input_size = batch_input.shape[1]
-        input_d = batch_input.shape[2]
+
+        # Get local embedded images of input pixels
+        batch_input = self._embed_batch_input(batch_input)
 
         if input_size != size:
             raise ValueError(("len(batch_input) = {0}, but "
                   "needs to be {1}").format(input_size, size))
-
-        if input_d != d:
-            raise ValueError(("dim(vec) = {0} in batch_input, but "
-                  "needs to be {1}").format(input_d, d))
 
         # Inputs aren't trainable
         batch_input.requires_grad = False
@@ -179,7 +207,6 @@ if __name__ == "__main__":
     images = torch.from_numpy(images).view([-1,size])
 
     loss_f = nn.MSELoss()
-    print(loss_f)
 
     epochs = 1
         
