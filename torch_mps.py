@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from misc import load_HV_data
+from misc import load_HV_data, convert_to_onehot
 
 # CRUCIAL
 # Compute loss function and write code for training the whole thing
@@ -21,25 +21,21 @@ from misc import load_HV_data
 
 # REALLY MINOR
 # Write code to move location of bond index
-# Add ability to specify type of scalar (currently only float allowed)
+# Add ability to specify type of datatype/scalar (currently only float allowed)
 # Rewrite for loop in batch prediction (logits) function to use batch multiplication
 
 
 class SingleCore():
+    """
+    Holds metadata for each core in our MPS. This is mainly to deal
+    with the case of variable bond dimensions, since all the tensors
+    for our normal cores are stored in a single tensor, core_tensors
+    """
     def __init__(self, shape):
-        # Initialize MPS core, which holds trainable core tensor
-        D_l, D_r, d = shape
         self.shape = shape
-        self.tensor = torch.randn(shape, dtype=torch.float)
-        self.tensor.requires_grad = True
-        
-    def as_mat(self):
-        # Reshape the D x D x d tensor into a (D*D) x d matrix
-        D_l, D_r, d = self.shape
-        return self.tensor.view((D_l*D_r, d))
+        self.D_l, self.D_r, self.d = shape
 
-
-class MPSClassifier(torch.nn.Module):
+class MPSClassifier(nn.Module):
     def __init__(self, size, D, d=2, num_labels=10, **args):
         """
         Define variables for holding our MPS cores (trainable)
@@ -61,14 +57,28 @@ class MPSClassifier(torch.nn.Module):
         else:
             self.bc = 'periodic'
 
-        # Shape of single MPS core
-        self.shape = [D, D, d]
-        # List of MPS cores, initialized randomly
-        self.cores = [SingleCore(self.shape) for _ in range(size)]
+        full_shape = [size, D, D, d]
+        single_tensor_shape = [D, D, d]
+        # Weights and information about all MPS core tensors, 
+        # initialized randomly
+        self.core_tensors = nn.Parameter(torch.randn(full_shape))
+        self.core_info = [SingleCore(single_tensor_shape)
+                          for _ in range(size)]
 
+        label_shape = [D, D, num_labels]
         # The central label core, whose non-bond index gives
         # the output logit score for our classification labels
-        self.label_core = SingleCore([D, D, num_labels])
+        self.label_tensor = nn.Parameter(torch.randn(label_shape))
+        self.core_info.append(SingleCore(label_shape))
+        
+    def tensors_as_mats(self):
+        """
+        Return the size x D x D x d tensor holding our MPS cores,
+        but reshaped into a size x (D*D) x d tensor we can feed 
+        into batch multiplication
+        """
+        full_shape = [self.size, self.D**2, self.d]
+        return self.core_tensors.view(full_shape)
 
     def _contract_batch_input(self, batch_input):
         """
@@ -80,8 +90,9 @@ class MPSClassifier(torch.nn.Module):
 
         # Massage the shape of the core tensors and data 
         # vectors, then batch multiply them together
-        core_mats = [core.as_mat() for core in self.cores]
-        core_mats = torch.stack(core_mats).unsqueeze(0)
+        core_mats = self.tensors_as_mats()
+        # core_mats = [core.as_mat() for core in self.cores]
+        core_mats = core_mats.unsqueeze(0)
         core_mats = core_mats.expand([batch_size, size, D*D, d])
 
         core_mats = core_mats.contiguous()
@@ -177,9 +188,9 @@ class MPSClassifier(torch.nn.Module):
                     new_size = new_size + 1
             
             # Multiply our product matrix with the label tensor
-            label_core = self.label_core.tensor.permute([2,0,1])
+            label_tensor = self.label_tensor.permute([2,0,1])
             mat_stack = mats[0].unsqueeze(0).expand([num_labels, D, D])
-            logit_tensor = torch.bmm(mat_stack, label_core)
+            logit_tensor = torch.bmm(mat_stack, label_tensor)
             
             # Take the partial trace over the bond indices, 
             # which leaves us with an output logit score
@@ -193,8 +204,8 @@ class MPSClassifier(torch.nn.Module):
 ### TESTING STUFF BELOW ###
 if __name__ == "__main__":
     torch.manual_seed(23)
-    batch_size = 3
     length = 3
+    batch_size = 4*length
     size = length**2
     D = 2
     d = 2
@@ -204,12 +215,23 @@ if __name__ == "__main__":
                                   num_labels=num_labels, bc='open')
 
     images, labels = load_HV_data(length)
-    images = torch.from_numpy(images).view([-1,size])
+    images = images.view([-1,size])
+    label_vecs = convert_to_onehot(labels, d)
 
     loss_f = nn.MSELoss()
-
     epochs = 1
-        
-    prediction = my_classifier(images)
 
-    print(prediction)
+    scores = my_classifier(images)
+    predictions = torch.argmax(scores,1)
+    num_correct = torch.sum(torch.eq(predictions, labels)).float()
+    accuracy = num_correct / batch_size
+
+    for _ in range(epochs):
+        pass
+
+    # print("label_vecs =", label_vecs)
+    # print("scores =", scores)
+    # print("labels =     ", labels)
+    # print("predictions =", predictions)
+    # print("predictions==labels =", torch.eq(predictions, labels))
+    # print("accuracy =", accuracy)

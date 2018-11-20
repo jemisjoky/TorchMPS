@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 def _invert(image):
     """
@@ -18,7 +19,7 @@ def load_HV_data(length):
     0 (horizontal stripe) or 1 (vertical stripe).
     """
     images = np.ones([4*length, length, length])
-    labels = np.empty(4*length)
+    labels = np.empty(4*length, dtype=np.int)
 
     for i in range(length):
         # Horizontal stripe at i'th column
@@ -31,4 +32,19 @@ def load_HV_data(length):
         images[4*i+3] = _invert(images[4*i+2])
         labels[4*i+2], labels[4*i+3] = 1, 1
 
-    return images, labels
+    return torch.from_numpy(images), torch.from_numpy(labels)
+
+def convert_to_onehot(batch_labels, num_labels):
+    """
+    Take a list of discrete labels from the set 
+    {0,1,...,num_labels-1} and return a corresponding batch of
+    one-hot encoded vectors
+    """
+    if max(batch_labels) >= num_labels:
+        raise ValueError("Label values larger than allowed maximum")
+
+    label_tensor = torch.zeros([len(batch_labels), num_labels])
+    for i, label in enumerate(batch_labels):
+        label_tensor[i, label] = 1
+
+    return label_tensor
