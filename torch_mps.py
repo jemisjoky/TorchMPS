@@ -1,15 +1,23 @@
 import numpy as np
-import matplotlib
+import matplotlib.pyplot as plt
 import torch
 import math
 
 # CRUCIAL
-# Create method for taking collection of matrices and contracting all bond indices, yielding a prediction
 # Compute loss function and write code for training the whole thing
 # Make some data and test the whole thing out!!!
 
 # NOT AS CRUCIAL
 # Write embedding function for input grayscale images, imagined as a 2D grid of scalar values from [0,1]
+# Write MPS compression function using iterated SVD's, make sure you don't backpropagate through 
+#   the SVD though, sounds like this is numerically ill-conditioned
+# Choose better initialization (potentially using above compression routine)
+# Deal with variable local bond dimensions
+# Deal with non-periodic boundary conditions
+# Add placement of label index in any location
+
+# REALLY MINOR
+# Write code to move location of bond index
 
 
 class SingleCore():
@@ -27,11 +35,10 @@ class SingleCore():
 
 
 class MPSClassifier():
-    def __init__(self, size, D, d=2, num_labels=10, bc='open'):
+    def __init__(self, size, D, d=2, num_labels=10, **args):
         """
         Define variables for holding our MPS cores (trainable)
         """
-
         # Number of sites in the MPS
         self.size = size
         # Global bond dimension
@@ -40,9 +47,12 @@ class MPSClassifier():
         self.d = d
         # Number of distinct labels for our classification
         self.num_labels = num_labels
-        # Type of boundary conditions for our MPS
-        # (Either 'open' or 'periodic')
-        self.bc = bc
+        # Type of boundary conditions for our MPS, either 
+        # 'open' or 'periodic' (default 'periodic')
+        self.bc = 'periodic'
+        if 'bc' in args.keys():
+            self.bc = args['bc']
+
         # Shape of single MPS core
         self.shape = [D, D, d]
         # List of MPS cores, initialized randomly
@@ -51,6 +61,7 @@ class MPSClassifier():
         # The central label core, whose non-bond index gives
         # the output logit score for our classification labels
         self.label_core = SingleCore([D, D, num_labels])
+
 
     def _contract_input(self, input_vecs):
         """
@@ -77,6 +88,7 @@ class MPSClassifier():
         input_vecs must be formatted as a torch tensor
         """
         size, D, d = self.size, self.D, self.d
+        num_labels = self.num_labels
         num_layers = math.ceil(math.log(size, 2))
 
         input_len = input_vecs.shape[0]
@@ -110,18 +122,26 @@ class MPSClassifier():
             
             mats = torch.bmm(mats[0], mats[1])
         
-        mat_prod = mats[0]
+        # Multiply our product matrix with the label tensor
+        label_core = self.label_core.tensor.permute([2,0,1])
+        mat_stack = mats[0].unsqueeze(0).expand([num_labels, D, D])
+        logit_tensor = torch.bmm(mat_stack, label_core)
+        
+        # Take the partial trace over the bond indices, 
+        # which leaves us with the output logit score
+        logit_tensor = logit_tensor.view([num_labels, D*D])
+        eye_vec = torch.eye(D).view(D*D)
+        raw_score = torch.mv(logit_tensor, eye_vec)
 
-        """
-        TODO: Multiply a vectorized mat_prod by an appropriately
-              reshaped self.label_core, then return the result
-              as our logit score
-        """
+        return raw_score
+
 
 ### TESTING STUFF BELOW ###
-my_classifier = MPSClassifier(size=4, D=2)
+my_classifier = MPSClassifier(size=4, D=2, bc='open')
 
 input_vecs = torch.FloatTensor([0, 1])
 input_vecs = input_vecs.unsqueeze(0).expand([4, -1])
 
-my_classifier.logits(input_vecs)
+prediction = my_classifier.logits(input_vecs)
+
+print(prediction)
