@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import random
 from misc import load_HV_data, convert_to_onehot
 
 # CRUCIAL
@@ -197,51 +198,54 @@ class MPSClassifier(nn.Module):
 if __name__ == "__main__":
     torch.manual_seed(23)
 
-    length = 3
+    # Settings for my experiment
+    length = 5
     batch_size = 4*length
     size = length**2
-    D = 2
+    D = 5
     d = 2
     num_labels = 2
+    epochs = 50000
 
+    # Build the training environment
     classifier = MPSClassifier(size=size, D=D, d=d,
                                   num_labels=num_labels, bc='open')
-
     images, labels = load_HV_data(length)
     images = images.view([-1,size])
     label_vecs = convert_to_onehot(labels, d)
 
     loss_f = nn.MSELoss()
     optimi = torch.optim.Adam(classifier.parameters(), lr=1E-3)
-    epochs = 1
 
-    # Compute the training information
+    # Compute the initial training information
     scores = classifier(images)
-    predictions = torch.argmax(scores,1)
-    loss = loss_f(predictions, labels)
+    predictions = torch.argmax(scores, 1)
+    loss = loss_f(scores.float(), label_vecs.float())
     num_correct = torch.sum(torch.eq(predictions, labels)).float()
     accuracy = num_correct / batch_size
 
     for epoch in range(epochs):
         # Print the training information
-        print("accuracy =", accuracy)
-        print("epoch", epoch)
-        print("loss =", loss.item())
+        if epoch % 10 == 0:
+            print("### epoch", epoch, "###")
+            print("accuracy =", accuracy.item())
+            print("loss =", loss.item())
         
         # Get the gradients and step
         optimi.zero_grad()
         loss.backward()
         optimi.step()
 
-        # Shuffle to be safe
-        images, labels = random.shuffle(zip(images, labels))
+        # TODO: Make shuffling actually work
+        # images, labels = random.shuffle(list(zip(images, labels)))
 
         # Compute the training information, repeat
         scores = classifier(images)
         predictions = torch.argmax(scores,1)
-        loss = loss_f(predictions, labels)
+        loss = loss_f(scores.float(), label_vecs.float())
         num_correct = torch.sum(torch.eq(predictions, labels)).float()
         accuracy = num_correct / batch_size
+
 
 
 
