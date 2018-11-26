@@ -4,11 +4,10 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import random
-from misc import load_HV_data, convert_to_onehot
+from misc import load_HV_data, convert_to_onehot, joint_shuffle
 
 # CRUCIAL
-# Compute loss function and write code for training the whole thing
-# Make some data and test the whole thing out!!!
+# Expand data, separate it into separate train and test data
 
 # NOT AS CRUCIAL
 # Allow placement of label index in any location
@@ -65,8 +64,6 @@ class MPSClassifier(nn.Module):
 
         # Method used to initialize our tensor weights, either
         # 'random' or 'random_eye' (default 'random')
-        # Note that 'random' sets our tensors completely randomly,
-        # while 'random_eye' sets them close to the identity
         if 'weight_init_method' in args.keys():
             if 'weight_init_scale' not in args.keys():
                 raise ValueError("Need to set 'weight_init_scale'")
@@ -79,7 +76,9 @@ class MPSClassifier(nn.Module):
         self.init_std = init_std
 
         # Initialize the core tensors, which live on input sites,
-        # and the label tensor, which outputs label predictions
+        # and the label tensor, which outputs label predictions.
+        # Note that 'random' sets our tensors completely randomly,
+        # while 'random_eye' sets them close to the identity
         if init_method == 'random':
             self.core_tensors = nn.Parameter(
                                 init_std * torch.randn(full_shape))
@@ -96,7 +95,7 @@ class MPSClassifier(nn.Module):
             self.core_tensors = nn.Parameter(core_tensors)
             self.label_tensor = nn.Parameter(label_tensor)
         
-    def tensors_as_mats(self):
+    def _tensors_as_mats(self):
         """
         Return the size x D x D x d tensor holding our MPS cores,
         but reshaped into a size x (D*D) x d tensor we can feed 
@@ -115,7 +114,7 @@ class MPSClassifier(nn.Module):
 
         # Massage the shape of the core tensors and data 
         # vectors, then batch multiply them together
-        core_mats = self.tensors_as_mats()
+        core_mats = self._tensors_as_mats()
         # core_mats = [core.as_mat() for core in self.cores]
         core_mats = core_mats.unsqueeze(0)
         core_mats = core_mats.expand([batch_size, size, D*D, d])
@@ -214,7 +213,7 @@ class MPSClassifier(nn.Module):
             
             # Multiply our product matrix with the label tensor
             label_tensor = self.label_tensor.permute([2,0,1])
-            mat_stack = mats[0].unsqueeze(0).expand([num_labels, D, D])
+            mat_stack = mats[0].unsqueeze(0).expand([num_labels,D,D])
             logit_tensor = torch.bmm(mat_stack, label_tensor)
             
             # Take the partial trace over the bond indices, 
@@ -225,31 +224,44 @@ class MPSClassifier(nn.Module):
 
         return batch_scores
 
+    def num_correct(self, batch_input, labels):
+        """
+        Use our classifier to predict the labels associated with a
+        batch of input images, then compare with the correct labels
+        and return the number of correct guesses
+        """
+        scores = self.forward(batch_input)
+        predictions = torch.argmax(scores, 1)
+        return torch.sum(torch.eq(predictions, labels)).float()
 
-### TESTING STUFF BELOW ###
+
 if __name__ == "__main__":
     torch.manual_seed(23)
 
     # Experiment settings
     length = 14
-    batch_size = 4*length
     size = length**2
+    num_train_imgs = 3*(2**(length-1)-1)
+    num_test_imgs = 1*(2**(length-1)-1)
     D = 5
     d = 2
     num_labels = 2
-    epochs = 5000
-    loss_type = 'crossentropy'
-
+    epochs = 1000
+    batch_size = 100    # Size of minibatches
+    batches = num_train_imgs // batch_size
+    loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
     args = {'bc': 'open',
             'weight_init_method': 'random_eye',
             'weight_init_scale': 0.01}
 
-    # Build the training environment
+    # Build the training environment and load data
     classifier = MPSClassifier(size=size, D=D, d=d,
                                num_labels=num_labels, args=args)
-    images, labels = load_HV_data(length)
-    images = images.view([-1,size])
-    label_vecs = convert_to_onehot(labels, d)
+
+    train_imgs,train_lbls,test_imgs,test_lbls = load_HV_data(length)
+    train_imgs = train_imgs.view([-1, size])
+    test_imgs = test_imgs.view([-1, size])
+    label_vecs = convert_to_onehot(train_lbls, d)
 
     if loss_type == 'mse':
         loss_f = nn.MSELoss()
@@ -258,45 +270,61 @@ if __name__ == "__main__":
     optimi = torch.optim.Adam(classifier.parameters(), lr=1E-3)
 
     # Compute the initial training information
-    scores = classifier(images)
-    predictions = torch.argmax(scores, 1)
+    scores = classifier(train_imgs)
     if loss_type == 'mse':
         loss = loss_f(scores, label_vecs.float())
     elif loss_type == 'crossentropy':
-        loss = loss_f(scores, labels)
-    num_correct = torch.sum(torch.eq(predictions, labels)).float()
-    accuracy = num_correct / batch_size
+        loss = loss_f(scores, train_lbls)
+    
+    train_correct = classifier.num_correct(train_imgs, train_lbls)
+    train_acc = train_correct / num_train_imgs
+    test_correct = classifier.num_correct(test_imgs, test_lbls)
+    test_acc = test_correct / num_test_imgs
+
+    print("Training on {0} images of size "
+          "{1}x{1}".format(num_train_imgs, length))
+    print()
 
     for epoch in range(epochs):
         # Print the training information
-        if epoch % 10 == 0:
+        if epoch % 1 == 0:
             print("### epoch", epoch, "###")
             print("loss = {:.4e}".format(loss.item()))
-            print("accuracy = {:.4f}".format(accuracy.item()))
+            print("training accuracy = {:.4f}".format(train_acc.item()))
+            print("test accuracy = {:.4f}".format(test_acc.item()))
+            print()
         
-        # Get the gradients and step
-        optimi.zero_grad()
-        loss.backward()
-        optimi.step()
+        for batch in range(batches):
+            # Get data for this batch
+            batch_imgs = train_imgs[batch*batch_size:
+                                   (batch+1)*batch_size]
+            batch_lbls = train_lbls[batch*batch_size:
+                                   (batch+1)*batch_size]
+            batch_vecs = convert_to_onehot(batch_lbls, d)
 
-        # TODO: Make shuffling actually work
-        # images, labels = random.shuffle(list(zip(images, labels)))
+            # Compute the loss
+            scores = classifier(batch_imgs)
+            if loss_type == 'mse':
+                loss = loss_f(scores, batch_vecs.float())
+            elif loss_type == 'crossentropy':
+                loss = loss_f(scores, batch_lbls)
+
+            # Get the gradients and take an optimization step
+            optimi.zero_grad()
+            loss.backward()
+            optimi.step()
 
         # Compute the training information, repeat
-        scores = classifier(images)
-        predictions = torch.argmax(scores,1)
+        scores = classifier(train_imgs)
         if loss_type == 'mse':
-            loss = loss_f(scores, label_vecs.float())
+            loss = loss_f(scores, train_vecs.float())
         elif loss_type == 'crossentropy':
-            loss = loss_f(scores, labels)
-        num_correct = torch.sum(torch.eq(predictions, labels)).float()
-        accuracy = num_correct / batch_size
+            loss = loss_f(scores, train_lbls)
 
+        train_correct = classifier.num_correct(train_imgs, train_lbls)
+        train_acc = train_correct / num_train_imgs
+        test_correct = classifier.num_correct(test_imgs, test_lbls)
+        test_acc = test_correct / num_test_imgs
 
-
-
-    # print("label_vecs =", label_vecs)
-    # print("scores =", scores)
-    # print("labels =     ", labels)
-    # print("predictions =", predictions)
-    # print("predictions==labels =", torch.eq(predictions, labels))
+        # Shuffle our training data for the next epoch
+        train_imgs,train_lbls = joint_shuffle(train_imgs,train_lbls)
