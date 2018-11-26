@@ -73,8 +73,8 @@ class MPSClassifier(nn.Module):
             init_method = args['weight_init_method']
             init_std = args['weight_init_scale']
         else:
-            init_method = 'random'
-            init_std = 0.5
+            init_method = 'random_eye'
+            init_std = 0.01
         self.init_method = init_method
         self.init_std = init_std
 
@@ -238,10 +238,11 @@ if __name__ == "__main__":
     d = 2
     num_labels = 2
     epochs = 5000
+    loss_type = 'crossentropy'
 
     args = {'bc': 'open',
-            'weight_init_method': 'random',
-            'weight_init_scale': 0.5}
+            'weight_init_method': 'random_eye',
+            'weight_init_scale': 0.01}
 
     # Build the training environment
     classifier = MPSClassifier(size=size, D=D, d=d,
@@ -250,13 +251,19 @@ if __name__ == "__main__":
     images = images.view([-1,size])
     label_vecs = convert_to_onehot(labels, d)
 
-    loss_f = nn.MSELoss()
+    if loss_type == 'mse':
+        loss_f = nn.MSELoss()
+    elif loss_type == 'crossentropy':
+        loss_f = nn.CrossEntropyLoss()
     optimi = torch.optim.Adam(classifier.parameters(), lr=1E-3)
 
     # Compute the initial training information
     scores = classifier(images)
     predictions = torch.argmax(scores, 1)
-    loss = loss_f(scores.float(), label_vecs.float())
+    if loss_type == 'mse':
+        loss = loss_f(scores, label_vecs.float())
+    elif loss_type == 'crossentropy':
+        loss = loss_f(scores, labels)
     num_correct = torch.sum(torch.eq(predictions, labels)).float()
     accuracy = num_correct / batch_size
 
@@ -278,7 +285,10 @@ if __name__ == "__main__":
         # Compute the training information, repeat
         scores = classifier(images)
         predictions = torch.argmax(scores,1)
-        loss = loss_f(scores.float(), label_vecs.float())
+        if loss_type == 'mse':
+            loss = loss_f(scores, label_vecs.float())
+        elif loss_type == 'crossentropy':
+            loss = loss_f(scores, labels)
         num_correct = torch.sum(torch.eq(predictions, labels)).float()
         accuracy = num_correct / batch_size
 
