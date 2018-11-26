@@ -10,30 +10,19 @@ from misc import load_HV_data, convert_to_onehot
 # Make some data and test the whole thing out!!!
 
 # NOT AS CRUCIAL
-# Write embedding function for input grayscale images, imagined as a 2D grid of scalar values from [0,1]
+# Allow placement of label index in any location
+# Deal with non-periodic boundary conditions
 # Write MPS compression function using iterated SVD's, make sure you don't backpropagate through 
 #   the SVD though, sounds like this is numerically ill-conditioned
-# Choose better initialization (potentially using above compression routine)
+# Choose better initialization (potentially building on above compression routine)
 # Deal with variable local bond dimensions
-#   * This should involve require changes in _contract_batch_input
-# Deal with non-periodic boundary conditions
-# Add placement of label index in any location
+#   * This should mostly involve changes in _contract_batch_input, right?
+# Allow for mini-batches of our training data
 
 # REALLY MINOR
 # Write code to move location of bond index
 # Add ability to specify type of datatype/scalar (currently only float allowed)
 # Rewrite for loop in batch prediction (logits) function to use batch multiplication
-
-
-class SingleCore():
-    """
-    Holds metadata for each core in our MPS. This is mainly to deal
-    with the case of variable bond dimensions, since all the tensors
-    for our normal cores are stored in a single tensor, core_tensors
-    """
-    def __init__(self, shape):
-        self.shape = shape
-        self.D_l, self.D_r, self.d = shape
 
 class MPSClassifier(nn.Module):
     def __init__(self, size, D, d=2, num_labels=10, **args):
@@ -57,19 +46,22 @@ class MPSClassifier(nn.Module):
         else:
             self.bc = 'periodic'
 
-        full_shape = [size, D, D, d]
-        single_tensor_shape = [D, D, d]
         # Weights and information about all MPS core tensors, 
         # initialized randomly
+        full_shape = [size, D, D, d]
         self.core_tensors = nn.Parameter(torch.randn(full_shape))
-        self.core_info = [SingleCore(single_tensor_shape)
-                          for _ in range(size)]
+        single_shape = torch.Tensor([D, D, d]).unsqueeze(0)
+        self.core_shapes = single_shape.expand([size, 3])     
 
+        # The output label core, whose non-bond index gives
+        # the logit score for each classification label
         label_shape = [D, D, num_labels]
-        # The central label core, whose non-bond index gives
-        # the output logit score for our classification labels
         self.label_tensor = nn.Parameter(torch.randn(label_shape))
-        self.core_info.append(SingleCore(label_shape))
+        self.label_shape = torch.Tensor(label_shape)
+
+        # Location of the label index
+        # TODO: Make this work by changing forward() appropriately
+        self.label_location = size // 2
         
     def tensors_as_mats(self):
         """
@@ -204,6 +196,7 @@ class MPSClassifier(nn.Module):
 ### TESTING STUFF BELOW ###
 if __name__ == "__main__":
     torch.manual_seed(23)
+
     length = 3
     batch_size = 4*length
     size = length**2
@@ -211,7 +204,7 @@ if __name__ == "__main__":
     d = 2
     num_labels = 2
 
-    my_classifier = MPSClassifier(size=size, D=D, d=d,
+    classifier = MPSClassifier(size=size, D=D, d=d,
                                   num_labels=num_labels, bc='open')
 
     images, labels = load_HV_data(length)
@@ -219,19 +212,41 @@ if __name__ == "__main__":
     label_vecs = convert_to_onehot(labels, d)
 
     loss_f = nn.MSELoss()
+    optimi = torch.optim.Adam(classifier.parameters(), lr=1E-3)
     epochs = 1
 
-    scores = my_classifier(images)
+    # Compute the training information
+    scores = classifier(images)
     predictions = torch.argmax(scores,1)
+    loss = loss_f(predictions, labels)
     num_correct = torch.sum(torch.eq(predictions, labels)).float()
     accuracy = num_correct / batch_size
 
-    for _ in range(epochs):
-        pass
+    for epoch in range(epochs):
+        # Print the training information
+        print("accuracy =", accuracy)
+        print("epoch", epoch)
+        print("loss =", loss.item())
+        
+        # Get the gradients and step
+        optimi.zero_grad()
+        loss.backward()
+        optimi.step()
+
+        # Shuffle to be safe
+        images, labels = random.shuffle(zip(images, labels))
+
+        # Compute the training information, repeat
+        scores = classifier(images)
+        predictions = torch.argmax(scores,1)
+        loss = loss_f(predictions, labels)
+        num_correct = torch.sum(torch.eq(predictions, labels)).float()
+        accuracy = num_correct / batch_size
+
+
 
     # print("label_vecs =", label_vecs)
     # print("scores =", scores)
     # print("labels =     ", labels)
     # print("predictions =", predictions)
     # print("predictions==labels =", torch.eq(predictions, labels))
-    # print("accuracy =", accuracy)
