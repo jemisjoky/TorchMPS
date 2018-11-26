@@ -40,6 +40,11 @@ class MPSClassifier(nn.Module):
         self.d = d
         # Number of distinct labels for our classification
         self.num_labels = num_labels
+
+        # If args is specified as dict, unpack it
+        if 'args' in args.keys():
+            args = args['args']
+
         # Type of boundary conditions for our MPS, either 
         # 'open' or 'periodic' (default 'periodic')
         if 'bc' in args.keys():
@@ -47,22 +52,49 @@ class MPSClassifier(nn.Module):
         else:
             self.bc = 'periodic'
 
-        # Weights and information about all MPS core tensors, 
-        # initialized randomly
+        # Information about the shapes of our tensors
         full_shape = [size, D, D, d]
-        self.core_tensors = nn.Parameter(torch.randn(full_shape))
+        label_shape = [D, D, num_labels]
         single_shape = torch.Tensor([D, D, d]).unsqueeze(0)
         self.core_shapes = single_shape.expand([size, 3])     
-
-        # The output label core, whose non-bond index gives
-        # the logit score for each classification label
-        label_shape = [D, D, num_labels]
-        self.label_tensor = nn.Parameter(torch.randn(label_shape))
         self.label_shape = torch.Tensor(label_shape)
 
         # Location of the label index
         # TODO: Make this work by changing forward() appropriately
         self.label_location = size // 2
+
+        # Method used to initialize our tensor weights, either
+        # 'random' or 'random_eye' (default 'random')
+        # Note that 'random' sets our tensors completely randomly,
+        # while 'random_eye' sets them close to the identity
+        if 'weight_init_method' in args.keys():
+            if 'weight_init_scale' not in args.keys():
+                raise ValueError("Need to set 'weight_init_scale'")
+            init_method = args['weight_init_method']
+            init_std = args['weight_init_scale']
+        else:
+            init_method = 'random'
+            init_std = 0.5
+        self.init_method = init_method
+        self.init_std = init_std
+
+        # Initialize the core tensors, which live on input sites,
+        # and the label tensor, which outputs label predictions
+        if init_method == 'random':
+            self.core_tensors = nn.Parameter(
+                                init_std * torch.randn(full_shape))
+            self.label_tensor = nn.Parameter(
+                                init_std * torch.randn(label_shape))
+        elif init_method == 'random_eye':
+            core_tensors = torch.eye(D).view([1, D, D, 1])
+            core_tensors = core_tensors.expand(full_shape) + \
+                           init_std * torch.randn(full_shape)
+            label_tensor = torch.eye(D).unsqueeze(2)
+            label_tensor = label_tensor.expand(label_shape) + \
+                           init_std * torch.randn(label_shape)
+            
+            self.core_tensors = nn.Parameter(core_tensors)
+            self.label_tensor = nn.Parameter(label_tensor)
         
     def tensors_as_mats(self):
         """
@@ -198,18 +230,22 @@ class MPSClassifier(nn.Module):
 if __name__ == "__main__":
     torch.manual_seed(23)
 
-    # Settings for my experiment
-    length = 5
+    # Experiment settings
+    length = 14
     batch_size = 4*length
     size = length**2
     D = 5
     d = 2
     num_labels = 2
-    epochs = 50000
+    epochs = 5000
+
+    args = {'bc': 'open',
+            'weight_init_method': 'random',
+            'weight_init_scale': 0.5}
 
     # Build the training environment
     classifier = MPSClassifier(size=size, D=D, d=d,
-                                  num_labels=num_labels, bc='open')
+                               num_labels=num_labels, args=args)
     images, labels = load_HV_data(length)
     images = images.view([-1,size])
     label_vecs = convert_to_onehot(labels, d)
@@ -228,8 +264,8 @@ if __name__ == "__main__":
         # Print the training information
         if epoch % 10 == 0:
             print("### epoch", epoch, "###")
-            print("accuracy =", accuracy.item())
-            print("loss =", loss.item())
+            print("loss = {:.4e}".format(loss.item()))
+            print("accuracy = {:.4f}".format(accuracy.item()))
         
         # Get the gradients and step
         optimi.zero_grad()
