@@ -21,7 +21,7 @@ def load_HV_data(length):
         print("load_HV_data will generate {} images, "
               "this could take a while...".format(num_images))
 
-    images = np.empty([num_images, length, length])
+    images = np.empty([num_images,length,length], dtype=np.float32)
     labels = np.empty(num_images, dtype=np.int)
 
     # Used to generate the stripe pattern from integer i below
@@ -73,8 +73,14 @@ def joint_shuffle(input_imgs, input_lbls):
     """
     Take pytorch arrays of images and labels, jointly shuffle
     them so that each label remains pointed to its corresponding
-    image, then return the reshuffled tensors
+    image, then return the reshuffled tensors. Works for both
+    regular and CUDA tensors.
     """
+    assert input_imgs.is_cuda == input_lbls.is_cuda
+    use_gpu = input_imgs.is_cuda
+    if use_gpu:
+        input_imgs, input_lbls = input_imgs.cpu(), input_lbls.cpu()
+
     images, labels = input_imgs.numpy(), input_lbls.numpy()
 
     # Shuffle relative to the same seed
@@ -83,4 +89,8 @@ def joint_shuffle(input_imgs, input_lbls):
     np.random.seed(0)
     np.random.shuffle(labels)
 
-    return torch.from_numpy(images), torch.from_numpy(labels)
+    images, labels = torch.from_numpy(images), torch.from_numpy(labels)
+    if use_gpu:
+        images, labels = images.cuda(), labels.cuda()
+
+    return images, labels

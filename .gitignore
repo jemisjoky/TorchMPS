@@ -1,3 +1,6 @@
-# Local Python stuff
+# Python environment data
 env/
 __pycache__/
+
+# Slurm logs
+slurm-*

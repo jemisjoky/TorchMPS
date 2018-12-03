@@ -2,22 +2,19 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
 import random
+import time
+import sys
+from math import ceil
 from misc import load_HV_data, convert_to_onehot, joint_shuffle
-
-# CRUCIAL
-# Expand data, separate it into separate train and test data
 
 # NOT AS CRUCIAL
 # Allow placement of label index in any location
 # Deal with non-periodic boundary conditions
 # Write MPS compression function using iterated SVD's, make sure you don't backpropagate through 
 #   the SVD though, sounds like this is numerically ill-conditioned
-# Choose better initialization (potentially building on above compression routine)
 # Deal with variable local bond dimensions
 #   * This should mostly involve changes in _contract_batch_input, right?
-# Allow for mini-batches of our training data
 
 # REALLY MINOR
 # Write code to move location of bond index
@@ -54,9 +51,9 @@ class MPSClassifier(nn.Module):
         # Information about the shapes of our tensors
         full_shape = [size, D, D, d]
         label_shape = [D, D, num_labels]
-        single_shape = torch.Tensor([D, D, d]).unsqueeze(0)
+        single_shape = torch.tensor([D, D, d]).unsqueeze(0)
         self.core_shapes = single_shape.expand([size, 3])     
-        self.label_shape = torch.Tensor(label_shape)
+        self.label_shape = torch.tensor(label_shape)
 
         # Location of the label index
         # TODO: Make this work by changing forward() appropriately
@@ -140,7 +137,7 @@ class MPSClassifier(nn.Module):
             raise ValueError("Embedding map needs d=2, but "
                 "self.d={}".format(self.d))
         else:
-            return torch.Tensor([1-datum, datum])
+            return torch.tensor([1-datum, datum])
 
     def _embed_batch_input(self, batch_input):
         """
@@ -224,76 +221,116 @@ class MPSClassifier(nn.Module):
 
         return batch_scores
 
-    def num_correct(self, batch_input, labels):
+    def num_correct(self, input_imgs, labels, batch_size=100):
         """
         Use our classifier to predict the labels associated with a
         batch of input images, then compare with the correct labels
-        and return the number of correct guesses
+        and return the number of correct guesses. For the sake of
+        memory, the input is processed in batches of size batch_size
         """
-        scores = self.forward(batch_input)
-        predictions = torch.argmax(scores, 1)
-        return torch.sum(torch.eq(predictions, labels)).float()
+        bs = batch_size
+        num_imgs = input_imgs.size(0)
+        num_batches = ceil(num_imgs / bs)
+        num_corr = 0.
 
+        for b in range(num_batches):
+            if b == num_batches-1:
+                # Last batch might be smaller
+                batch_input = input_imgs[b*bs:]
+                batch_labels = labels[b*bs:]
+            else:
+                batch_input = input_imgs[b*bs:(b+1)*bs]
+                batch_labels = labels[b*bs:(b+1)*bs]
+
+            with torch.no_grad():
+                scores = self.forward(batch_input)
+            predictions = torch.argmax(scores, 1)
+            
+            num_corr += torch.sum(
+                        torch.eq(predictions, batch_labels)).float()
+
+        return num_corr
 
 if __name__ == "__main__":
+    start_point = time.time()
+    forward_time = 0.
+    back_time = 0.
+    diag_time = 0.
     torch.manual_seed(23)
+
+    if len(sys.argv) == 1:
+        want_gpu = True
+    else:
+        want_gpu = False if sys.argv[1]=='no_gpu' else True
+
+    use_gpu = want_gpu and torch.cuda.is_available()
+    device = torch.device("cuda:0" if use_gpu else "cpu")
+    print("Using device:", device)
+    torch.set_default_tensor_type('torch.cuda.FloatTensor'
+                  if use_gpu else 'torch.FloatTensor')
 
     # Experiment settings
     length = 14
     size = length**2
     num_train_imgs = 3*(2**(length-1)-1)
     num_test_imgs = 1*(2**(length-1)-1)
-    D = 5
+    D = 50
     d = 2
     num_labels = 2
-    epochs = 1000
-    batch_size = 100    # Size of minibatches
-    batches = num_train_imgs // batch_size
+    epochs = 5
+    batch_size = 100            # Size of minibatches
     loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
     args = {'bc': 'open',
             'weight_init_method': 'random_eye',
             'weight_init_scale': 0.01}
+    batches = num_train_imgs // batch_size
+    if batches == 0:
+        raise ValueError("Batch size < # of training images")
 
     # Build the training environment and load data
+    train_imgs,train_lbls,test_imgs,test_lbls = load_HV_data(length)
+    train_imgs = train_imgs.view([-1, size]).to(device)
+    test_imgs = test_imgs.view([-1, size]).to(device)
+    label_vecs = convert_to_onehot(train_lbls, d)
+    print("Training on {0} images of size "
+          "{1}x{1}".format(num_train_imgs, length))
+    print()
+
     classifier = MPSClassifier(size=size, D=D, d=d,
                                num_labels=num_labels, args=args)
 
-    train_imgs,train_lbls,test_imgs,test_lbls = load_HV_data(length)
-    train_imgs = train_imgs.view([-1, size])
-    test_imgs = test_imgs.view([-1, size])
-    label_vecs = convert_to_onehot(train_lbls, d)
+    if use_gpu:
+        classifier = classifier.cuda(device=device)
+        train_imgs = train_imgs.cuda(device=device)
+        train_lbls = train_lbls.cuda(device=device)
+        test_imgs = test_imgs.cuda(device=device)
+        test_lbls = test_lbls.cuda(device=device)
 
     if loss_type == 'mse':
         loss_f = nn.MSELoss()
     elif loss_type == 'crossentropy':
         loss_f = nn.CrossEntropyLoss()
-    optimi = torch.optim.Adam(classifier.parameters(), lr=1E-3)
-
-    # Compute the initial training information
-    scores = classifier(train_imgs)
-    if loss_type == 'mse':
-        loss = loss_f(scores, label_vecs.float())
-    elif loss_type == 'crossentropy':
-        loss = loss_f(scores, train_lbls)
+    optimizer = torch.optim.Adam(classifier.parameters(), lr=1E-3)
+    init_point = time.time()
     
-    train_correct = classifier.num_correct(train_imgs, train_lbls)
+    # Compute and print out the initial accuracy
+    diag_point = time.time()
+    train_correct = classifier.num_correct(train_imgs,
+                               train_lbls, batch_size)
     train_acc = train_correct / num_train_imgs
-    test_correct = classifier.num_correct(test_imgs, test_lbls)
+    test_correct = classifier.num_correct(test_imgs,
+                              test_lbls, batch_size)
     test_acc = test_correct / num_test_imgs
+    diag_time += time.time() - diag_point
 
-    print("Training on {0} images of size "
-          "{1}x{1}".format(num_train_imgs, length))
+    print("### before training ###")
+    print("training accuracy = {:.4f}".format(train_acc.item()))
+    print("test accuracy = {:.4f}".format(test_acc.item()))
     print()
 
     for epoch in range(epochs):
-        # Print the training information
-        if epoch % 1 == 0:
-            print("### epoch", epoch, "###")
-            print("loss = {:.4e}".format(loss.item()))
-            print("training accuracy = {:.4f}".format(train_acc.item()))
-            print("test accuracy = {:.4f}".format(test_acc.item()))
-            print()
         
+        av_loss = 0.
         for batch in range(batches):
             # Get data for this batch
             batch_imgs = train_imgs[batch*batch_size:
@@ -302,29 +339,54 @@ if __name__ == "__main__":
                                    (batch+1)*batch_size]
             batch_vecs = convert_to_onehot(batch_lbls, d)
 
-            # Compute the loss
+            # Compute the loss and add it to the running total
+            forward_point = time.time()
             scores = classifier(batch_imgs)
             if loss_type == 'mse':
                 loss = loss_f(scores, batch_vecs.float())
             elif loss_type == 'crossentropy':
                 loss = loss_f(scores, batch_lbls)
+            av_loss += loss
+            forward_time += time.time() - forward_point
 
             # Get the gradients and take an optimization step
-            optimi.zero_grad()
+            back_point = time.time()
+            optimizer.zero_grad()
             loss.backward()
-            optimi.step()
+            optimizer.step()
+            back_time += time.time() - back_point
 
         # Compute the training information, repeat
-        scores = classifier(train_imgs)
-        if loss_type == 'mse':
-            loss = loss_f(scores, train_vecs.float())
-        elif loss_type == 'crossentropy':
-            loss = loss_f(scores, train_lbls)
+        loss = av_loss / batches
 
+        diag_point = time.time()
         train_correct = classifier.num_correct(train_imgs, train_lbls)
         train_acc = train_correct / num_train_imgs
         test_correct = classifier.num_correct(test_imgs, test_lbls)
         test_acc = test_correct / num_test_imgs
+        diag_time += time.time() - diag_point
+
+        # Print the training information
+        if epoch % 1 == 0:
+            print("### epoch", epoch, "###")
+            print("average loss = {:.4e}".format(loss.item()))
+            print("training accuracy = {:.4f}".format(train_acc.item()))
+            print("test accuracy = {:.4f}".format(test_acc.item()))
+            print()
 
         # Shuffle our training data for the next epoch
         train_imgs,train_lbls = joint_shuffle(train_imgs,train_lbls)
+
+    # Get relevant runtimes
+    end_point = time.time()
+    init_time = init_point - start_point
+    train_time = end_point - init_point
+    run_time = end_point - start_point
+
+    print("Loading time  = {0:.2f} sec".format(init_time))
+    print("Forward time  = {0:.2f} sec".format(forward_time))
+    print("Backprop time = {0:.2f} sec".format(back_time))
+    print("Error time    = {0:.2f} sec".format(diag_time))
+    print("---------------------------")
+    print("Training time = {0:.2f} sec".format(train_time))
+    print("Total runtime = {0:.2f} sec".format(run_time))
