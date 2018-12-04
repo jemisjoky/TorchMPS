@@ -2,6 +2,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision
 import random
 import time
 import sys
@@ -270,14 +271,14 @@ if __name__ == "__main__":
                   if use_gpu else 'torch.FloatTensor')
 
     # Experiment settings
-    length = 14
+    length = 28
     size = length**2
-    num_train_imgs = 3*(2**(length-1)-1)
-    num_test_imgs = 1*(2**(length-1)-1)
-    D = 50
+    num_train_imgs = 10000
+    num_test_imgs = 10000
+    D = 20
     d = 2
-    num_labels = 2
-    epochs = 5
+    num_labels = 10
+    epochs = 50
     batch_size = 100            # Size of minibatches
     loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
     args = {'bc': 'open',
@@ -287,11 +288,37 @@ if __name__ == "__main__":
     if batches == 0:
         raise ValueError("Batch size < # of training images")
 
-    # Build the training environment and load data
-    train_imgs,train_lbls,test_imgs,test_lbls = load_HV_data(length)
-    train_imgs = train_imgs.view([-1, size]).to(device)
-    test_imgs = test_imgs.view([-1, size]).to(device)
-    label_vecs = convert_to_onehot(train_lbls, d)
+    print("Using bond dimension D =", D)
+
+    # Load the training and test sets
+    transform = torchvision.transforms.ToTensor()
+    train_set = torchvision.datasets.MNIST(root='./mnist',
+                train=True, download=True, transform=transform)
+    test_set = torchvision.datasets.MNIST(root='./mnist',
+                train=False, download=True, transform=transform)
+    
+    train_imgs = torch.stack([data[0].view(size)
+                          for data in train_set])
+    test_imgs = torch.stack([data[0].view(size)
+                          for data in test_set])
+    train_lbls = torch.stack([data[1] for data in train_set])
+    test_lbls = torch.stack([data[1] for data in test_set])
+    label_vecs = convert_to_onehot(train_lbls, num_labels)
+
+    # If we don't want to train on all of MNIST, pare down a bit
+    if len(train_imgs) > num_train_imgs:
+        train_imgs, train_lbls = joint_shuffle(train_imgs, train_lbls)
+        train_imgs = train_imgs[:num_train_imgs]
+        train_lbls = train_lbls[:num_train_imgs]
+
+    if len(test_imgs) > num_test_imgs:
+        test_imgs, test_lbls = joint_shuffle(test_imgs, test_lbls)
+        test_imgs = test_imgs[:num_test_imgs]
+        test_lbls = test_lbls[:num_test_imgs]
+
+    # train_imgs,train_lbls,test_imgs,test_lbls = load_HV_data(length)
+    # train_imgs = train_imgs.view([-1, size]).to(device)
+    # test_imgs = test_imgs.view([-1, size]).to(device)
     print("Training on {0} images of size "
           "{1}x{1}".format(num_train_imgs, length))
     print()
@@ -311,7 +338,7 @@ if __name__ == "__main__":
     elif loss_type == 'crossentropy':
         loss_f = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(classifier.parameters(), lr=1E-3)
-    init_point = time.time()
+    init_time = time.time() - start_point
     
     # Compute and print out the initial accuracy
     diag_point = time.time()
@@ -326,6 +353,7 @@ if __name__ == "__main__":
     print("### before training ###")
     print("training accuracy = {:.4f}".format(train_acc.item()))
     print("test accuracy = {:.4f}".format(test_acc.item()))
+    print("  loading time  = {0:.2f} sec".format(init_time))
     print()
 
     for epoch in range(epochs):
@@ -337,7 +365,7 @@ if __name__ == "__main__":
                                    (batch+1)*batch_size]
             batch_lbls = train_lbls[batch*batch_size:
                                    (batch+1)*batch_size]
-            batch_vecs = convert_to_onehot(batch_lbls, d)
+            batch_vecs = convert_to_onehot(batch_lbls, num_labels)
 
             # Compute the loss and add it to the running total
             forward_point = time.time()
@@ -359,34 +387,41 @@ if __name__ == "__main__":
         # Compute the training information, repeat
         loss = av_loss / batches
 
-        diag_point = time.time()
-        train_correct = classifier.num_correct(train_imgs, train_lbls)
-        train_acc = train_correct / num_train_imgs
-        test_correct = classifier.num_correct(test_imgs, test_lbls)
-        test_acc = test_correct / num_test_imgs
-        diag_time += time.time() - diag_point
+        print("### epoch", epoch, "###")
+        print("average loss = {:.4e}".format(loss.item()))
 
-        # Print the training information
+        # Every so often, calculate the diagnostic information
         if epoch % 1 == 0:
-            print("### epoch", epoch, "###")
-            print("average loss = {:.4e}".format(loss.item()))
+            diag_point = time.time()
+            train_correct = classifier.num_correct(train_imgs, train_lbls)
+            train_acc = train_correct / num_train_imgs
+            test_correct = classifier.num_correct(test_imgs, test_lbls)
+            test_acc = test_correct / num_test_imgs
+            diag_time += time.time() - diag_point
+
+            current_point = time.time()
+            run_time = current_point - start_point
             print("training accuracy = {:.4f}".format(train_acc.item()))
             print("test accuracy = {:.4f}".format(test_acc.item()))
-            print()
+            print("  forward time  = {0:.2f} sec".format(forward_time))
+            print("  backprop time = {0:.2f} sec".format(back_time))
+            print("  error time    = {0:.2f} sec".format(diag_time))
+            print("  ---------------------------")
+            print("  runtime so far = {0:.2f} sec".format(run_time))
+        print()
 
         # Shuffle our training data for the next epoch
-        train_imgs,train_lbls = joint_shuffle(train_imgs,train_lbls)
+        train_imgs, train_lbls = joint_shuffle(train_imgs, train_lbls)
 
     # Get relevant runtimes
     end_point = time.time()
-    init_time = init_point - start_point
     train_time = end_point - init_point
     run_time = end_point - start_point
 
-    print("Loading time  = {0:.2f} sec".format(init_time))
-    print("Forward time  = {0:.2f} sec".format(forward_time))
-    print("Backprop time = {0:.2f} sec".format(back_time))
-    print("Error time    = {0:.2f} sec".format(diag_time))
+    print("loading time  = {0:.2f} sec".format(init_time))
+    print("forward time  = {0:.2f} sec".format(forward_time))
+    print("backprop time = {0:.2f} sec".format(back_time))
+    print("error time    = {0:.2f} sec".format(diag_time))
     print("---------------------------")
-    print("Training time = {0:.2f} sec".format(train_time))
-    print("Total runtime = {0:.2f} sec".format(run_time))
+    print("training time = {0:.2f} sec".format(train_time))
+    print("total runtime = {0:.2f} sec".format(run_time))

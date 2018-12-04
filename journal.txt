@@ -1,0 +1,9 @@
+Since Torch_MPS is now fully functional and able to train on MNIST data, I'll summarize my ongoing findings here.
+
+First, using a GPU during training seems to provide a big speedup when training with larger bond dimensions. On the simple HV dataset of 24573 14x14 images, training for 5 epochs using a classifier with bond dimension 50 took 2.68 hours, of which 35% was spent forward propagating input data, 5% was spent doing backpropagation, and 57% was spent calculating error diagnostics.
+
+By comparison, running the same computation on a CPU took XXXX.
+
+This time can obviously be sped up by logging less data, but the main point here is that the GPU is both much faster, and spends much less of its time doing XXXX.
+
+On a truncated MNIST dataset with 10000 training and 10000 test images, XXXX
