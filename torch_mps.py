@@ -9,7 +9,7 @@ import sys
 from math import ceil
 from misc import load_HV_data, convert_to_onehot, joint_shuffle
 
-# NOT AS CRUCIAL
+# CRUCIAL
 # Allow placement of label index in any location
 # Deal with non-periodic boundary conditions
 # Write MPS compression function using iterated SVD's, make sure you don't backpropagate through 
@@ -20,7 +20,7 @@ from misc import load_HV_data, convert_to_onehot, joint_shuffle
 # REALLY MINOR
 # Write code to move location of bond index
 # Add ability to specify type of datatype/scalar (currently only float allowed)
-# Rewrite for loop in batch prediction (logits) function to use batch multiplication
+# Rewrite loop over input images in forward function to make use of batch multiplication
 
 class MPSClassifier(nn.Module):
     def __init__(self, size, D, d=2, num_labels=10, **args):
@@ -58,7 +58,7 @@ class MPSClassifier(nn.Module):
 
         # Location of the label index
         # TODO: Make this work by changing forward() appropriately
-        self.label_location = size // 2
+        self.label_site = size // 2
 
         # Method used to initialize our tensor weights, either
         # 'random' or 'random_eye' (default 'random')
@@ -162,23 +162,25 @@ class MPSClassifier(nn.Module):
 
         batch_input must be formatted as a torch tensor of size 
         [batch_size, input_size], where every entry lies in
-        the interval [0, 1]
+        the interval [0, 1].
+
+        The internals of this evaluation are different for open vs
+        periodic boundary conditions, and also take into account
+        the location of the label index within our classifier.
         """
         size, D, d = self.size, self.D, self.d
         num_labels = self.num_labels
-        num_layers = size.bit_length() - 1
+        label_site = self.label_site
 
         batch_size = batch_input.shape[0]
         input_size = batch_input.shape[1]
-
-        # Get local embedded images of input pixels
-        batch_input = self._embed_batch_input(batch_input)
 
         if input_size != size:
             raise ValueError(("len(batch_input) = {0}, but "
                   "needs to be {1}").format(input_size, size))
 
-        # Inputs aren't trainable
+        # Get local embedded images of input pixels
+        batch_input = self._embed_batch_input(batch_input)
         batch_input.requires_grad = False
 
         # Get a batch of matrices, which we will multiply 
@@ -186,39 +188,85 @@ class MPSClassifier(nn.Module):
         batch_mats = self._contract_batch_input(batch_input)
         batch_scores = torch.zeros([batch_size, num_labels])
 
+        # To take account of the variable location of the label 
+        # site, we need to separately contract matrices to the
+        # left and right of that site, which is handled using
+        # separate sets of variables
+        
+        # Depth of iterated matrix multiplication trees
+        left_depth = label_site.bit_length()
+        right_depth = (size - label_site).bit_length()
+        depth = max(left_depth, right_depth)
+
         for i in range(batch_size):
-            mats = batch_mats[i]
-            new_size = size
+            left_mats = batch_mats[i, :label_site]
+            right_mats = batch_mats[i, label_site:]
 
-            # Iteratively multiply nearest neighboring pairs of matrices
-            # until we've reduced this to a single product matrix
-            for j in range(num_layers):
-                odd_size = (new_size % 2) == 1
-                new_size = new_size // 2
+            left_size = label_site
+            right_size = size - label_site
+
+            # Iteratively multiply nearest neighboring pairs of 
+            # matrices until we've reduced the left and right sides
+            # to single matrices
+            for _ in range(depth):
+                left_done, right_done = left_size<=1, right_size<=1
+                right_odd = (right_size % 2) == 1
+
+                # The following contraction is executed for both the
+                # right and left sides, conditioned on that side
+                # still having matrices that need contraction
+                if not left_done:
+                    odd_size = (left_size % 2) == 1
+                    left_size = left_size // 2
                 
-                # If our size is odd, leave the last matrix aside
-                # and multiply together all other matrix pairs
-                if odd_size:
-                    mats = mats[:-1]
-                    lone_mat = mats[-1].unsqueeze(0)
+                    # If our size is odd, set aside the right-most
+                    # matrix and multiply together all other pairs
+                    if odd_size:
+                        lone_mat = left_mats[-1].unsqueeze(0)
+                        left_mats = left_mats[:-1]
+                    else:
+                        lone_mat = None
 
-                mats = mats.view([2, new_size, D, D])
-                mats = torch.bmm(mats[0], mats[1])
+                    left_mats = left_mats.view([2, left_size, D, D])
+                    left_mats = torch.bmm(left_mats[0], left_mats[1])
 
-                if odd_size:
-                    mats = torch.cat([mats, lone_mat], 0)
-                    new_size = new_size + 1
-            
-            # Multiply our product matrix with the label tensor
+                    if odd_size:
+                        left_size = left_size + 1
+                        left_mats = torch.cat([left_mats, lone_mat], 0)
+
+                if not right_done:
+                    odd_size = (right_size % 2) == 1
+                    right_size = right_size // 2
+                
+                    # If our size is odd, set aside the right-most
+                    # matrix and multiply together all other pairs
+                    if odd_size:
+                        lone_mat = right_mats[-1].unsqueeze(0)
+                        right_mats = right_mats[:-1]
+                    else:
+                        lone_mat = None
+
+                    right_mats = right_mats.view([2, right_size, D, D])
+                    right_mats = torch.bmm(right_mats[0], right_mats[1])
+
+                    if odd_size:
+                        right_size = right_size + 1
+                        right_mats = torch.cat([right_mats, lone_mat], 0)
+
+            # We now have one product matrix on the left and one on
+            # the right, which we contract with the label tensor
+            left_stack = left_mats.expand([num_labels, D, D])
+            right_stack = right_mats.expand([num_labels, D, D])
             label_tensor = self.label_tensor.permute([2,0,1])
-            mat_stack = mats[0].unsqueeze(0).expand([num_labels,D,D])
-            logit_tensor = torch.bmm(mat_stack, label_tensor)
+
+            label_tensor = torch.bmm(left_stack, label_tensor)
+            label_tensor = torch.bmm(label_tensor, right_stack)
             
-            # Take the partial trace over the bond indices, 
-            # which leaves us with an output logit score
-            logit_tensor = logit_tensor.view([num_labels, D*D])
+            # Finally, taking the partial trace over the bond 
+            # indices leaves us with an output logit score
+            label_tensor = label_tensor.view([num_labels, D*D])
             eye_vec = torch.eye(D).view(D*D)
-            batch_scores[i] = torch.mv(logit_tensor, eye_vec)
+            batch_scores[i] = torch.mv(label_tensor, eye_vec)
 
         return batch_scores
 
@@ -253,42 +301,43 @@ class MPSClassifier(nn.Module):
         return num_corr
 
 if __name__ == "__main__":
+    # Experimental parameters
+    length = 28
+    size = length**2
+    num_train_imgs = 1000
+    num_test_imgs = 1000
+    D = 20
+    d = 2
+    epochs = 5
+    batch_size = 100            # Size of minibatches
+    num_labels = 10             # Always 10 for MNIST
+    loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
+    args = {'bc': 'open',
+            'weight_init_method': 'random_eye',
+            'weight_init_scale': 0.01}
+    
+    print("Using bond dimension D =", D)
+    batches = num_train_imgs // batch_size
+    if batches == 0:
+        raise ValueError("Batch size < # of training images")
+
+    # Initialize timing variables
     start_point = time.time()
     forward_time = 0.
     back_time = 0.
     diag_time = 0.
     torch.manual_seed(23)
 
+    # Get and set GPU-related parameters
     if len(sys.argv) == 1:
         want_gpu = True
     else:
-        want_gpu = False if sys.argv[1]=='no_gpu' else True
-
+        want_gpu = False if sys.argv[1]=='--no_gpu' else True
     use_gpu = want_gpu and torch.cuda.is_available()
     device = torch.device("cuda:0" if use_gpu else "cpu")
-    print("Using device:", device)
     torch.set_default_tensor_type('torch.cuda.FloatTensor'
                   if use_gpu else 'torch.FloatTensor')
-
-    # Experiment settings
-    length = 28
-    size = length**2
-    num_train_imgs = 10000
-    num_test_imgs = 10000
-    D = 20
-    d = 2
-    num_labels = 10
-    epochs = 50
-    batch_size = 100            # Size of minibatches
-    loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
-    args = {'bc': 'open',
-            'weight_init_method': 'random_eye',
-            'weight_init_scale': 0.01}
-    batches = num_train_imgs // batch_size
-    if batches == 0:
-        raise ValueError("Batch size < # of training images")
-
-    print("Using bond dimension D =", D)
+    print("Using device:", device)
 
     # Load the training and test sets
     transform = torchvision.transforms.ToTensor()
@@ -317,12 +366,11 @@ if __name__ == "__main__":
         test_lbls = test_lbls[:num_test_imgs]
 
     # train_imgs,train_lbls,test_imgs,test_lbls = load_HV_data(length)
-    # train_imgs = train_imgs.view([-1, size]).to(device)
-    # test_imgs = test_imgs.view([-1, size]).to(device)
     print("Training on {0} images of size "
           "{1}x{1}".format(num_train_imgs, length))
     print()
 
+    # Build our MPS classifier using our chosen parameters
     classifier = MPSClassifier(size=size, D=D, d=d,
                                num_labels=num_labels, args=args)
 
@@ -356,9 +404,10 @@ if __name__ == "__main__":
     print("  loading time  = {0:.2f} sec".format(init_time))
     print()
 
+    # Start the actual training
     for epoch in range(epochs):
-        
         av_loss = 0.
+
         for batch in range(batches):
             # Get data for this batch
             batch_imgs = train_imgs[batch*batch_size:
@@ -403,25 +452,22 @@ if __name__ == "__main__":
             run_time = current_point - start_point
             print("training accuracy = {:.4f}".format(train_acc.item()))
             print("test accuracy = {:.4f}".format(test_acc.item()))
-            print("  forward time  = {0:.2f} sec".format(forward_time))
-            print("  backprop time = {0:.2f} sec".format(back_time))
-            print("  error time    = {0:.2f} sec".format(diag_time))
-            print("  ---------------------------")
-            print("  runtime so far = {0:.2f} sec".format(run_time))
+            # print("  forward time  = {0:.2f} sec".format(forward_time))
+            # print("  backprop time = {0:.2f} sec".format(back_time))
+            # print("  error time    = {0:.2f} sec".format(diag_time))
+            # print("  ---------------------------")
+            # print("  runtime so far = {0:.2f} sec".format(run_time))
         print()
 
         # Shuffle our training data for the next epoch
         train_imgs, train_lbls = joint_shuffle(train_imgs, train_lbls)
 
     # Get relevant runtimes
-    end_point = time.time()
-    train_time = end_point - init_point
-    run_time = end_point - start_point
+    run_time = time.time() - start_point
 
     print("loading time  = {0:.2f} sec".format(init_time))
     print("forward time  = {0:.2f} sec".format(forward_time))
     print("backprop time = {0:.2f} sec".format(back_time))
     print("error time    = {0:.2f} sec".format(diag_time))
     print("---------------------------")
-    print("training time = {0:.2f} sec".format(train_time))
     print("total runtime = {0:.2f} sec".format(run_time))
