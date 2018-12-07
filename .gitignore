@@ -4,6 +4,7 @@ __pycache__/
 
 # Slurm logs
 slurm-*
+logs/
 
 # MNIST data
 mnist/

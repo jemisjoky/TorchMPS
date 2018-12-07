@@ -9,5 +9,3 @@ source activate torch_mps
 # Actual script below
 echo "------------- WITH GPU -------------"
 ./torch_mps.py
-echo "------------- WITHOUT GPU -------------"
-./torch_mps.py no_gpu
