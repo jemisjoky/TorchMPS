@@ -7,5 +7,6 @@ echo Running pwdon $HOSTNAME
 source activate torch_mps
 
 # Actual script below
+echo "Few images, no L2 regularization"
 echo "------------- WITH GPU -------------"
 ./torch_mps.py
