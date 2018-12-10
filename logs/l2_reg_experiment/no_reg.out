@@ -1,0 +1,168 @@
+Running pwdon bart5
+Few images, no L2 regularization
+------------- WITH GPU -------------
+Using device: cuda:0
+Training on 5000 images of size 28x28 for 10 epochs
+Using bond dimension D = 40
+
+### before training ###
+training accuracy = 0.1272
+test accuracy = 0.1386
+
+### epoch 0 ###
+average loss = 4.8025e+00
+training accuracy = 0.9058
+test accuracy = 0.8940
+  forward time  = 550.56 sec
+  backprop time = 0.28 sec
+  error time    = 2217.65 sec
+  ---------------------------
+  runtime so far = 2812.59 sec
+
+### epoch 1 ###
+average loss = 2.9890e-01
+training accuracy = 0.9348
+test accuracy = 0.9118
+  forward time  = 1099.81 sec
+  backprop time = 0.55 sec
+  error time    = 3329.56 sec
+  ---------------------------
+  runtime so far = 4493.76 sec
+
+### epoch 2 ###
+average loss = 1.9081e-01
+training accuracy = 0.9598
+test accuracy = 0.9202
+  forward time  = 1650.02 sec
+  backprop time = 0.82 sec
+  error time    = 4441.66 sec
+  ---------------------------
+  runtime so far = 6176.11 sec
+
+### epoch 3 ###
+average loss = 1.7695e-01
+training accuracy = 0.9556
+test accuracy = 0.9130
+  forward time  = 2199.41 sec
+  backprop time = 1.09 sec
+  error time    = 5552.65 sec
+  ---------------------------
+  runtime so far = 7856.52 sec
+
+### epoch 4 ###
+average loss = 1.2954e-01
+training accuracy = 0.9460
+test accuracy = 0.9026
+  forward time  = 2750.19 sec
+  backprop time = 1.36 sec
+  error time    = 6666.92 sec
+  ---------------------------
+  runtime so far = 9541.60 sec
+
+### epoch 5 ###
+average loss = 1.0999e-01
+training accuracy = 0.9768
+test accuracy = 0.9320
+  forward time  = 3300.52 sec
+  backprop time = 1.63 sec
+  error time    = 7779.29 sec
+  ---------------------------
+  runtime so far = 11224.33 sec
+
+### epoch 6 ###
+average loss = 1.0381e-01
+training accuracy = 0.9682
+test accuracy = 0.9186
+  forward time  = 3850.91 sec
+  backprop time = 1.90 sec
+  error time    = 8892.74 sec
+  ---------------------------
+  runtime so far = 12908.14 sec
+
+### epoch 7 ###
+average loss = 1.1054e-01
+training accuracy = 0.9824
+test accuracy = 0.9358
+  forward time  = 4401.50 sec
+  backprop time = 2.17 sec
+  error time    = 10004.55 sec
+  ---------------------------
+  runtime so far = 14590.52 sec
+
+### epoch 8 ###
+average loss = 1.1835e-01
+training accuracy = 0.9760
+test accuracy = 0.9324
+  forward time  = 4954.72 sec
+  backprop time = 2.45 sec
+  error time    = 11118.96 sec
+  ---------------------------
+  runtime so far = 16278.19 sec
+
+### epoch 9 ###
+average loss = 1.6072e-01
+training accuracy = 0.9718
+test accuracy = 0.9326
+  forward time  = 5506.87 sec
+  backprop time = 2.72 sec
+  error time    = 12229.64 sec
+  ---------------------------
+  runtime so far = 17960.97 sec
+
+loading time  = 24.32 sec
+forward time  = 5506.87 sec
+backprop time = 2.72 sec
+error time    = 12229.64 sec
+---------------------------
+total runtime = 17961.00 sec
+
+======== GPU REPORT ========
+
+==============NVSMI LOG==============
+
+Timestamp                           : Sun Dec  9 17:18:45 2018
+Driver Version                      : 396.37
+
+Attached GPUs                       : 2
+GPU 00000000:04:00.0
+    Accounting Mode                 : Enabled
+    Accounting Mode Buffer Size     : 4000
+    Accounted Processes
+        Process ID                  : 29488
+            GPU Utilization         : 9 %
+            Memory Utilization      : 0 %
+            Max memory usage        : 5389 MiB
+            Time                    : 17961083 ms
+            Is Running              : 0
+        Process ID                  : 29396
+            GPU Utilization         : 9 %
+            Memory Utilization      : 0 %
+            Max memory usage        : 0 MiB
+            Time                    : 17961382 ms
+            Is Running              : 0
+
+GPU 00000000:05:00.0
+    Accounting Mode                 : Enabled
+    Accounting Mode Buffer Size     : 4000
+    Accounted Processes             : None
+
+Sun Dec  9 17:18:45 2018       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 396.37                 Driver Version: 396.37                    |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|===============================+======================+======================|
+|   0  GeForce GTX TIT...  Off  | 00000000:04:00.0  On |                  N/A |
+| 45%   72C    P0   116W / 250W |     25MiB /  6083MiB |    100%      Default |
++-------------------------------+----------------------+----------------------+
+|   1  GeForce GTX TIT...  Off  | 00000000:05:00.0 Off |                  N/A |
+| 26%   31C    P8    13W / 250W |      1MiB /  6083MiB |      0%      Default |
++-------------------------------+----------------------+----------------------+
+                                                                               
++-----------------------------------------------------------------------------+
+| Processes:                                                       GPU Memory |
+|  GPU       PID   Type   Process name                             Usage      |
+|=============================================================================|
+|    0      1337      G   /usr/bin/X                                    22MiB |
++-----------------------------------------------------------------------------+

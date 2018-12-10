@@ -1,0 +1,96 @@
+Running pwdon bart3
+Few images, 1E-3 L2 regularization
+------------- WITH GPU -------------
+Using device: cuda:0
+Training on 5000 images of size 28x28 for 10 epochs
+Using bond dimension D = 40
+
+### before training ###
+training accuracy = 0.1272
+test accuracy = 0.1386
+
+### epoch 0 ###
+average loss = 4.8025e+00
+training accuracy = 0.9058
+test accuracy = 0.8940
+  forward time  = 523.51 sec
+  backprop time = 0.29 sec
+  error time    = 2113.69 sec
+  ---------------------------
+  runtime so far = 2681.53 sec
+
+### epoch 1 ###
+average loss = 2.9890e-01
+training accuracy = 0.9348
+test accuracy = 0.9118
+  forward time  = 1046.75 sec
+  backprop time = 0.56 sec
+  error time    = 3175.39 sec
+  ---------------------------
+  runtime so far = 4287.20 sec
+
+### epoch 2 ###
+average loss = 1.9081e-01
+training accuracy = 0.9598
+test accuracy = 0.9202
+  forward time  = 1570.94 sec
+  backprop time = 0.83 sec
+  error time    = 4242.72 sec
+  ---------------------------
+  runtime so far = 5899.44 sec
+
+### epoch 3 ###
+average loss = 1.7695e-01
+slurmstepd-bart3: error: *** JOB 282478 ON bart3 CANCELLED AT 2018-12-09T14:23:19 ***
+
+======== GPU REPORT ========
+
+==============NVSMI LOG==============
+
+Timestamp                           : Sun Dec  9 14:23:19 2018
+Driver Version                      : 396.37
+
+Attached GPUs                       : 2
+GPU 00000000:04:00.0
+    Accounting Mode                 : Enabled
+    Accounting Mode Buffer Size     : 4000
+    Accounted Processes
+        Process ID                  : 12750
+            GPU Utilization         : 10 %
+            Memory Utilization      : 0 %
+            Max memory usage        : 5389 MiB
+            Time                    : 0 ms
+            Is Running              : 1
+        Process ID                  : 12658
+            GPU Utilization         : 10 %
+            Memory Utilization      : 0 %
+            Max memory usage        : 0 MiB
+            Time                    : 0 ms
+            Is Running              : 1
+
+GPU 00000000:05:00.0
+    Accounting Mode                 : Enabled
+    Accounting Mode Buffer Size     : 4000
+    Accounted Processes             : None
+
+Sun Dec  9 14:23:19 2018       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 396.37                 Driver Version: 396.37                    |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|===============================+======================+======================|
+|   0  GeForce GTX TIT...  Off  | 00000000:04:00.0  On |                  N/A |
+| 52%   82C    P2    99W / 250W |   5424MiB /  6083MiB |      8%      Default |
++-------------------------------+----------------------+----------------------+
+|   1  GeForce GTX TIT...  Off  | 00000000:05:00.0 Off |                  N/A |
+| 30%   48C    P8    14W / 250W |      1MiB /  6083MiB |      0%      Default |
++-------------------------------+----------------------+----------------------+
+                                                                               
++-----------------------------------------------------------------------------+
+| Processes:                                                       GPU Memory |
+|  GPU       PID   Type   Process name                             Usage      |
+|=============================================================================|
+|    0      8604      G   /usr/bin/X                                    22MiB |
+|    0     12750      C   python3                                     5389MiB |
++-----------------------------------------------------------------------------+

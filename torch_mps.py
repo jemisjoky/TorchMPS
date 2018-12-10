@@ -598,16 +598,16 @@ if __name__ == "__main__":
     # Experimental parameters
     length = 28                 # Linear dimension of input images
     size = length**2            # Number of pixels in input images
-    num_train_imgs = 5000       # Total number of training and
-    num_test_imgs = 5000        #   testing images
+    num_train_imgs = 5000      # Total number of training and
+    num_test_imgs = 5000       #   testing images
     
-    D = 40                      # Maximum bond dimension
+    D = [20, 40]                # Maximum bond dimension
     d = 2                       # Local feature dimension
     num_labels = 10             # Number of classification labels
 
     epochs = 10                 # Rounds of training
     batch_size = 100            # Size of minibatches
-    weight_decay = 1e-3         # L2 regularizer weight
+    weight_decay = 0            # L2 regularizer weight
     loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
 
     # Parameters for defining our classifier
@@ -625,6 +625,7 @@ if __name__ == "__main__":
     forward_time = 0.
     back_time = 0.
     diag_time = 0.
+    compress_time = 0.
     torch.manual_seed(23)
 
     # Get and set GPU-related parameters
@@ -739,6 +740,11 @@ if __name__ == "__main__":
         # Compute the training information, repeat
         loss = av_loss / batches
 
+        # Compress the classifier's bond dimensions
+        compress_point = time.time()
+        classifier.compress()
+        compress_time += time.time() - compress_point
+
         print("### epoch", epoch, "###")
         print("average loss = {:.4e}".format(loss.item()))
 
@@ -758,14 +764,10 @@ if __name__ == "__main__":
             print("  forward time  = {0:.2f} sec".format(forward_time))
             print("  backprop time = {0:.2f} sec".format(back_time))
             print("  error time    = {0:.2f} sec".format(diag_time))
+            print("  compress time = {0:.2f} sec".format(compress_time))
             print("  ---------------------------")
             print("  runtime so far = {0:.2f} sec".format(run_time))
         print()
-
-        # Compress the classifier's bond dimensions
-        compress_point = time.time()
-        compress_time += time.time() - compress_point
-        classifier.compress()
 
         # Shuffle our training data for the next epoch
         train_imgs, train_lbls = joint_shuffle(train_imgs, train_lbls)
@@ -777,5 +779,6 @@ if __name__ == "__main__":
     print("forward time  = {0:.2f} sec".format(forward_time))
     print("backprop time = {0:.2f} sec".format(back_time))
     print("error time    = {0:.2f} sec".format(diag_time))
+    print("compress time = {0:.2f} sec".format(compress_time))
     print("---------------------------")
     print("total runtime = {0:.2f} sec".format(run_time))
