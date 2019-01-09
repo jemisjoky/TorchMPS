@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-from torch_mps import MPSClassifier
+import sys
+import time
+import torch
+import torchvision
+import torch.nn as nn
+from torch_mps import MPSModule
+from misc import convert_to_onehot, joint_shuffle
 
 # Experimental parameters
 length = 28
 size = length**2
-num_train_imgs = 10000
-num_test_imgs = 10000
-D = 20
+num_train_imgs = 1000
+num_test_imgs = 1000
+D = 10
 d = 2
 epochs = 10
 batch_size = 100            # Size of minibatches
@@ -45,24 +51,13 @@ train_set = torchvision.datasets.MNIST(root='./mnist',
 test_set = torchvision.datasets.MNIST(root='./mnist',
             train=False, download=True, transform=transform)
 
-train_imgs = torch.stack([data[0].view(size)
-                      for data in train_set])
-test_imgs = torch.stack([data[0].view(size)
-                      for data in test_set])
+train_imgs = torch.stack([data[0].view(size) for data in train_set])
 train_lbls = torch.stack([data[1] for data in train_set])
+train_imgs, train_lbls = train_imgs[:num_train_imgs], train_lbls[:num_train_imgs]
+
+test_imgs = torch.stack([data[0].view(size) for data in test_set])
 test_lbls = torch.stack([data[1] for data in test_set])
-label_vecs = convert_to_onehot(train_lbls, num_labels)
-
-# If we don't want to train on all of MNIST, pare down a bit
-if len(train_imgs) > num_train_imgs:
-    train_imgs, train_lbls = joint_shuffle(train_imgs, train_lbls)
-    train_imgs = train_imgs[:num_train_imgs]
-    train_lbls = train_lbls[:num_train_imgs]
-
-if len(test_imgs) > num_test_imgs:
-    test_imgs, test_lbls = joint_shuffle(test_imgs, test_lbls)
-    test_imgs = test_imgs[:num_test_imgs]
-    test_lbls = test_lbls[:num_test_imgs]
+test_imgs, test_lbls = test_imgs[:num_test_imgs], test_lbls[:num_test_imgs]
 
 print("Training on {0} images of size "
       "{1}x{1} for {2} epochs".format(
@@ -71,8 +66,7 @@ print("Using bond dimension D =", D)
 print()
 
 # Build our MPS classifier using our chosen parameters
-classifier = MPSClassifier(size=size, D=D, d=d,
-                           num_labels=num_labels, args=args)
+classifier = MPSModule(size=size, D=D, d=d, output_dim=num_labels, args=args)
 
 if use_gpu:
     classifier = classifier.cuda(device=device)
