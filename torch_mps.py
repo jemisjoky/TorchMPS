@@ -13,8 +13,8 @@ from math import ceil
       I have now, and 'dynamic' involving an alternation between adjusting
       even bonds and odd bonds. This necessarily requires a `train_counter`
       which counts the number of data that are passed to forward(), and 
-      automatically changes 'dynamic_mode', a flag which is either 'even' or
-      'odd', for adjusting even or odd bonds.
+      automatically changes 'dynamic_mode', a flag which is either 'merge_left'
+      or 'merge_right', for adjusting different sets of bonds.
 
         * Initialize new parameters and flags in __init__(), make sure to
           set defaults appropriately. Before doing this, think of the geometry
@@ -152,19 +152,19 @@ class MPSModule(nn.Module):
         self.dynamic_mode = 'no_merge'
 
         # Effective size and label site after merging cores in dynamic mode
-        self.dyn_size = (size + (1 if bc == 'periodic' else 0)) // 2
+        self.dyn_size = (size + (1 if bc == 'open' else 0)) // 2
         self.dyn_label_site = label_site // 2
         dyn_full_shape = [self.dyn_size, D, D, d, d]
 
         # Merged cores for dynamic train mode (set after mode switch)
         self.dyn_base_shapes = self.dyn_size * [[D, D, d, d]]
         self.dyn_label_shape = [D, D, output_dim, d]
-        self.dyn_base_cores = nn.Parameter(torch.empty(dyn_full_shape))
-        self.dyn_label_core = nn.Parameter(torch.empty(self.dyn_label_shape))
+        self.dyn_base_cores = nn.Parameter(torch.zeros(dyn_full_shape))
+        self.dyn_label_core = nn.Parameter(torch.zeros(self.dyn_label_shape))
 
         # Each input datum increments train_counter by 1, and after reaching
         # toggle_threshold, dynamic_mode is toggled between 'even' and 'odd'
-        self.train_counter = 0
+        self.train_counter = -1
         self.toggle_threshold = 1000
 
         # Sets truncation during un-merging process
@@ -177,8 +177,7 @@ class MPSModule(nn.Module):
         Args:
             batch_input (Tensor): Input data, with shape of [batch_size, size].
                 Optionally, if batch_input has size [batch_size, size, d], then
-                input is already assumed to be in embedded form, which skips a
-                call to _embed_batch_input.
+                input is already assumed to be in embedded form.
 
         Returns:
             base_mats (Tensor): Data-dependent matrices coming from contraction
@@ -199,8 +198,6 @@ class MPSModule(nn.Module):
         """
         size = self.size
         D, d = self.D, self.d
-        dyn_size = self.dyn_size
-        label_site = self.label_site
         output_dim = self.output_dim
 
         batch_shape = batch_input.shape
@@ -211,18 +208,20 @@ class MPSModule(nn.Module):
             batch_input = batch_input.permute([1, 0]).contiguous()
             batch_input = self._embed_batch_input(batch_input)
         else:
-            batch_input = batch_input.permute([1, 0, 2])
-        batch_input = batch_input.contiguous().view([size*batch_size, d, 1])
+            batch_input = batch_input.permute([1, 0, 2]).contiguous()
 
         # If train_mode is static, then contraction is pretty straightforward.
         # Just massage the shapes of our base cores and embedded data and
         # batch multiply them all together
         if self.train_mode == 'static' or self.dynamic_mode == 'no_merge':
-            batch_mats = self.base_cores.view([size, 1, D**2, d])
+            batch_input = batch_input.view([size*batch_size, d, 1])
+            
+            batch_mats = self.base_cores.view([size, 1, D*D, d])
             batch_mats = batch_mats.expand([size, batch_size, D*D, d])
             batch_mats = batch_mats.contiguous()
             batch_mats = batch_mats.view([size*batch_size, D*D, d])
 
+            # The actual contraction of inputs with (reshaped) base cores
             base_mats = torch.bmm(batch_mats, batch_input)
             base_mats = base_mats.view([size, batch_size, D, D])
             
@@ -232,11 +231,58 @@ class MPSModule(nn.Module):
 
             return base_mats, label_cores
 
-        # If train_mode is dynamic, we need to iterate by site index and do
-        # batch multiplications only over batch index. This section invokes all
-        # of the merged geometry of the MPS
+        # If train_mode is dynamic, we need to contract input data with the
+        # merged cores. This involves some tricky details regarding the 
+        # different ways we can merge the cores of our MPS 
         else:
-            pass
+            bc = self.bc
+            dyn_size = self.dyn_size
+            label_site = self.label_site
+            dyn_label_site = self.dyn_label_site
+            dynamic_mode = self.dynamic_mode
+
+            # First contract at a special site to get the label core for each
+            # datum. If label core is at one of the ends, it might stay the
+            # same (lone label), or be contracted with a "wrap-around" site
+            lone_label = False
+            wrap_around = False
+
+            if dynamic_mode == 'merge_left':
+                special_site = 2 * (label_site // 2)
+            elif dynamic_mode == 'merge_right':
+                special_site = 2 * ((label_site - 1) // 2) + 1
+
+                # Deal with (literal) edge cases for label placement
+                if label_site in [0,size] and size % 2 == 1:
+                    if bc == 'periodic':
+                        wrap_around = True
+                        special_site = special_site % size
+                    else:
+                        lone_label = True
+
+            label_cores = self.label_core.permute([2, 0, 1, 3]).unsqueeze(0)
+            label_cores = label_cores.expand([batch_size, output_dim, D, D, d])
+            label_cores = label_cores.contiguous()
+
+            if lone_label:
+                # Lone label means no contractions required
+                label_cores = label_cores[:, :, :, :, 0]
+            else:
+                # Otherwise, contract with data from our special site
+                special_batch = batch_input[special_site].unsqueeze(2)
+                label_cores = label_cores.view([batch_size, output_dim*D*D, d])
+                label_cores = torch.bmm(label_cores, special_batch)
+
+                label_cores = label_cores.view([batch_size, output_dim, D, D])
+
+            # Now contract over the base cores to get base_mats
+            # BTW, dyn_full_shape = [self.dyn_size, D, D, d, d]
+            batch_mats = self.dyn_base_cores.view([dyn_size, 1, D*D*d, d])
+            batch_mats = batch_mats.expand([dyn_size, batch_size, D*D*d, d])
+            batch_mats = batch_mats.contiguous()
+
+            # Contract right-most pixels from merged sites
+            right_input = XXXX
 
             return base_mats, label_cores
 
@@ -315,9 +361,6 @@ class MPSModule(nn.Module):
 
         # Contract batch_input with MPS cores to get matrices and label cores
         base_mats, label_cores = self._contract_batch_input(batch_input)
-
-        # REWRITE FOLLOWING IN TERMS OF base_mats AND label_cores
-
 
         # Divide into regions left and right of the label site
         left_mats = base_mats[:label_site]
@@ -400,6 +443,16 @@ class MPSModule(nn.Module):
         pass
 
     def _change_dynamic_mode(self, new_mode):
+        """
+        NOTE: Even when merging the label tensor with a core tensor on its 
+              left, the resultant shape is *still* [D, D, output_dim, d].
+              This might involve some permuting of indices, no big deal.
+
+              Also, our dynamic label core will ALWAYS have the shape
+              [D, D, output_dim, d], even when it isn't contracted with any
+              input data. In that case, have dyn_label_core[:, :, :, 0] hold
+              the actual core, the rest can be zero.
+        """
         pass
 
     def num_correct(self, input_data, labels, batch_size=100):
