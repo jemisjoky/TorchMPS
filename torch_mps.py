@@ -151,6 +151,17 @@ class MPSModule(nn.Module):
         self.train_mode = 'static'
         self.dynamic_mode = 'no_merge'
 
+
+
+
+        # DELETE THIS
+        self.train_mode = 'dynamic'
+        self.dynamic_mode = 'merge_right'
+
+
+
+
+
         # Effective size and label site after merging cores in dynamic mode
         self.dyn_size = (size + (1 if bc == 'open' else 0)) // 2
         self.dyn_label_site = label_site // 2
@@ -188,13 +199,6 @@ class MPSModule(nn.Module):
                 [batch_size, output_dim, D, D]. In 'static' dynamic mode, this
                 is just a permuted and expanded version of self.label_core, but
                 in the presence of core merging this output is data-dependent
-
-        TODO:
-            (1) [IMPORTANT] Refactor to make the site index dominant
-            (2) Check shape of input and call _embed_batch_input if need be
-            (3) If we're in a merged dynamic mode, iterate through pairs of
-                sites and use .bmm() to merge pairs. Condition on label_site
-            (4) Stack outputs as base_mats, return with site index dominant
         """
         size = self.size
         D, d = self.D, self.d
@@ -216,13 +220,13 @@ class MPSModule(nn.Module):
         if self.train_mode == 'static' or self.dynamic_mode == 'no_merge':
             batch_input = batch_input.view([size*batch_size, d, 1])
             
-            batch_mats = self.base_cores.view([size, 1, D*D, d])
-            batch_mats = batch_mats.expand([size, batch_size, D*D, d])
-            batch_mats = batch_mats.contiguous()
-            batch_mats = batch_mats.view([size*batch_size, D*D, d])
+            base_cores = self.base_cores.view([size, 1, D*D, d])
+            base_cores = base_cores.expand([size, batch_size, D*D, d])
+            base_cores = base_cores.contiguous()
+            base_cores = base_cores.view([size*batch_size, D*D, d])
 
             # The actual contraction of inputs with (reshaped) base cores
-            base_mats = torch.bmm(batch_mats, batch_input)
+            base_mats = torch.bmm(base_cores, batch_input)
             base_mats = base_mats.view([size, batch_size, D, D])
             
             label_cores = self.label_core.permute([2, 0, 1]).unsqueeze(0)
@@ -232,59 +236,119 @@ class MPSModule(nn.Module):
             return base_mats, label_cores
 
         # If train_mode is dynamic, we need to contract input data with the
-        # merged cores. This involves some tricky details regarding the 
-        # different ways we can merge the cores of our MPS 
+        # merged cores. This involves some tricky geometric details regarding 
+        # the different ways we can merge the cores of our MPS, and the 
+        # different (literal) edge cases which emerge at the ends of the MPS
         else:
             bc = self.bc
             dyn_size = self.dyn_size
             label_site = self.label_site
-            dyn_label_site = self.dyn_label_site
             dynamic_mode = self.dynamic_mode
+            dyn_label_site = self.dyn_label_site
 
-            # First contract at a special site to get the label core for each
-            # datum. If label core is at one of the ends, it might stay the
-            # same (lone label), or be contracted with a "wrap-around" site
-            lone_label = False
-            wrap_around = False
+            # Flags that indicate different edge cases in the MPS geometry
+            lone_left_core, lone_right_core = False, False
+            lone_label_core, wrap_around = False, False
 
             if dynamic_mode == 'merge_left':
                 special_site = 2 * (label_site // 2)
+                
+                # Even number of base cores leaves the last core unmerged
+                if size % 2 == 0:
+                    if label_site == size:
+                        lone_label_core = True
+                    else:
+                        lone_right_core = True
+
             elif dynamic_mode == 'merge_right':
                 special_site = 2 * ((label_site - 1) // 2) + 1
 
-                # Deal with (literal) edge cases for label placement
-                if label_site in [0,size] and size % 2 == 1:
+                # Even number of base cores leaves the first core unmerged
+                if size % 2 == 0:
+                    if label_site == 0:
+                        lone_label_core = True
+                    else:
+                        lone_left_core = True
+
+                # Odd number of base cores picks up all the base cases, which
+                # is either wrap-around, or else an unmerged core on each end
+                elif size % 2 == 1:
                     if bc == 'periodic':
                         wrap_around = True
                         special_site = special_site % size
+                    elif label_site == 0:
+                        lone_label_core = True
+                        lone_right_core = True
+                    elif label_site == size:
+                        lone_label_core = True
+                        lone_left_core = True
                     else:
-                        lone_label = True
+                        lone_left_core = True
+                        lone_right_core = True
 
-            label_cores = self.label_core.permute([2, 0, 1, 3]).unsqueeze(0)
+            # Get label_cores, usually by contraction with special_site pixel
+            label_cores = self.dyn_label_core.permute([2,0,1,3]).unsqueeze(0)
             label_cores = label_cores.expand([batch_size, output_dim, D, D, d])
             label_cores = label_cores.contiguous()
 
-            if lone_label:
-                # Lone label means no contractions required
-                label_cores = label_cores[:, :, :, :, 0]
-            else:
-                # Otherwise, contract with data from our special site
+            if not lone_label_core:
                 special_batch = batch_input[special_site].unsqueeze(2)
                 label_cores = label_cores.view([batch_size, output_dim*D*D, d])
                 label_cores = torch.bmm(label_cores, special_batch)
 
                 label_cores = label_cores.view([batch_size, output_dim, D, D])
+            else:
+                label_cores = label_cores[:, :, :, :, 0]
 
-            # Now contract over the base cores to get base_mats
-            # BTW, dyn_full_shape = [self.dyn_size, D, D, d, d]
-            batch_mats = self.dyn_base_cores.view([dyn_size, 1, D*D*d, d])
-            batch_mats = batch_mats.expand([dyn_size, batch_size, D*D*d, d])
-            batch_mats = batch_mats.contiguous()
+            # Until return statement, the following generates base_mats using 
+            # a contraction of our input pixels with the merged cores 
+            base_cores = self.dyn_base_cores.unsqueeze(1)
+            base_cores = base_cores.expand([dyn_size, batch_size, D, D, d, d])
+            base_cores = base_cores.contiguous()
+            base_cores = base_cores.view([dyn_size*batch_size, D*D*d, d])
+            
+            # Split our input pixels into those contracted on sites with even
+            # vs odd (i.e. left vs right) parity relative to our merge grouping
+            if dynamic_mode == 'merge_left':
+                even_pixels = [batch_input[0:special_site:2]]
+                odd_pixels = [batch_input[1:special_site:2]]
+            elif dynamic_mode == 'merge_right':
+                even_pixels = [batch_input[1:special_site:2]]
+                odd_pixels = [batch_input[2:special_site:2]]
+            even_pixels.append(batch_input[special_site + 1:size:2])
+            odd_pixels.append(batch_input[special_site + 2:size:2])
 
-            # Contract right-most pixels from merged sites
-            right_input = XXXX
+            # Filler data for padding odd_pixels if we have edge cases
+            padding_pixel = torch.zeros([1, 1, d])
+            padding_pixel[:, :, 0] = 1
+            padding_pixel = padding_pixel.expand([1, batch_size, d])
+            
+            # Adjust odd_pixels to handle different edge cases
+            if lone_left_core:
+                odd_pixels.insert(0, padding_pixel)
+            if lone_right_core:
+                odd_pixels.append(padding_pixel)
+            if wrap_around:
+                odd_pixels.append(batch_input[0])
 
-            return base_mats, label_cores
+            # Bring our pixels together and reshape for batch multiplication
+            even_pixels = torch.cat(even_pixels)
+            odd_pixels = torch.cat(odd_pixels)
+
+            print(even_pixels.shape)
+            print(f"lone_left_core = {lone_left_core}")
+            print(f"lone_right_core = {lone_right_core}")
+            print(f"wrap_around = {wrap_around}")
+            
+            even_pixels = even_pixels.view([dyn_size*batch_size, d, 1])
+            odd_pixels = odd_pixels.view([dyn_size*batch_size, d, 1])
+            
+            # Contract base_cores with odd_pixels, then even_pixels
+            base_cores = torch.bmm(base_cores, odd_pixels)
+            base_cores = base_cores.view([dyn_size*batch_size, D*D, d])
+            base_mats = torch.bmm(base_cores, even_pixels)
+
+            return base_mats.view([dyn_size, batch_size, D, D]), label_cores
 
     def _embed_batch_input(self, batch_input):
         """
@@ -332,23 +396,21 @@ class MPSModule(nn.Module):
                 [batch_size, output_dim].
         
         TODO:
-            (0) Check value of train_counter and possibly switch dynamic modes 
-                (0a) Write method to change train modes
-                (0b) Write method to change dynamic modes
-            (1) If dynamic mode is merged, load the correct size and label site
-            (2) Account for _*_batch_input() methods in site dominant format
+            (1) Check value of train_counter and possibly switch dynamic modes 
+                (1a) Write method to change train modes
+                (1b) Write method to change dynamic modes
             
-            (3) [BIG TASK] Check contract_mode to see if I should run the 
+            (2) [BIG TASK] Check contract_mode to see if I should run the 
                 current algorithm ('parallel'), or a new 'serial' algorithm
-                (3a) Write serial contraction algorithm with batch parallelism
-                (3b) See if you can refactor everything so the two contraction 
+                (2a) Write serial contraction algorithm with batch parallelism
+                (2b) See if you can refactor everything so the two contraction 
                      algorithms are stored as two different (internal) methods
             
-            (4) (Output should remain the same with all of these changes)
+            (3) (Output should remain the same with all of these changes)
         """
         size, D, d = self.size, self.D, self.d
         output_dim = self.output_dim
-        label_site = self.label_site
+        train_mode = self.train_mode
 
         # Get input shape and check that it's valid
         input_shape = batch_input.shape
@@ -362,79 +424,86 @@ class MPSModule(nn.Module):
         # Contract batch_input with MPS cores to get matrices and label cores
         base_mats, label_cores = self._contract_batch_input(batch_input)
 
+        # Depending on our training mode, we might have matrices/tensors which
+        # correspond to a different MPS geometry, so adjust for that here
+        if train_mode == 'dynamic':
+            size = self.dyn_size
+            label_site = self.dyn_label_site
+        else:
+            label_site = self.label_site
+
         # Divide into regions left and right of the label site
         left_mats = base_mats[:label_site]
         right_mats = base_mats[label_site:]
+        all_mats = [left_mats, right_mats]
 
-        # Size of the left and right matrix products, which decrease by half on 
-        # each iteration below
-        left_size = label_site
-        right_size = size - label_site
+        # Number of matrices on the left and right products, which decreases 
+        # by about half on each successive batch matrix multiplication
+        left_length = label_site
+        right_length = size - label_site
+        lengths = [left_length, right_length]
         
-        # lr_size and lr_mats let us treat both sides in a uniform manner
-        lr_size = [left_size, right_size]
-        lr_mats = [left_mats, right_mats]
-
-        # Iteratively multiply nearest neighboring pairs of matrices until we've
-        # reduced the left and right regions to a single matrix each
-        while max(lr_size) > 1:
-            # s is the left/right index
-            for s in [s for s in range(2) if lr_size[s] > 1]:
-                # size (or mats) is either left_size or right_size
-                size = lr_size[s]
-                mats = lr_mats[s]
-                odd_size = (size % 2) == 1
-                size = size // 2
-            
-                # If our size is odd, set aside extra matrix to make size even
-                if odd_size:
-                    lone_mats = mats[-1].unsqueeze(0)
-                    mats = mats[:-1]
-                else:
-                    lone_mats = None
-
-                # Divide matrices into neighboring pairs and 
-                # contract all pairs using batch multiplication
-                mats1, mats2 = mats[0::2].contiguous(), mats[1::2].contiguous()
-                mats1 = mats1.view([size*batch_size, D, D])
-                mats2 = mats2.view([size*batch_size, D, D])
-                mats = torch.bmm(mats1, mats2)
+        # Iteratively multiply nearest neighboring pairs of matrices until the 
+        # left and right regions are reduced to (at most) a single matrix each
+        while max(lengths) > 1:
+            for s in range(2): 
+                if lengths[s] > 1:
+                    # Unpack our length and matrices for this case
+                    length = lengths[s]
+                    mats = all_mats[s]
+                    leftover_mat = (length % 2) == 1
+                    length //= 2
                 
-                # Reshape and append any leftover matrices
-                mats = mats.view([size, batch_size, D, D])
-                if odd_size:
-                    size += 1
-                    mats = torch.cat([mats, lone_mats], 0)
+                    # Set aside leftover matrix when length is odd
+                    lone_mats = torch.tensor([])
+                    if leftover_mat:
+                        lone_mats = mats[-1:]
+                        mats = mats[:-1]
 
-                lr_size[s] = size
-                lr_mats[s] = mats
+                    # Divide matrices into neighboring pairs and 
+                    # contract all pairs using batch multiplication
+                    even_mats = mats[0::2].contiguous()
+                    odd_mats = mats[1::2].contiguous()
+                    even_mats = even_mats.view([length*batch_size, D, D])
+                    odd_mats = odd_mats.view([length*batch_size, D, D])
+                    mats = torch.bmm(even_mats, odd_mats)
+                    
+                    # Append leftover matrix
+                    mats = mats.view([length, batch_size, D, D])
+                    mats = torch.cat([mats, lone_mats])
+                    length += 1 if leftover_mat else 0
 
-        # For each input, we now have (at most) one matrix on the left and
-        # (at most) one on the right (empty if `label_site` is 0 or `size`)
-        # We now contract these three (two) objects to obtain our output
+                    lengths[s] = length
+                    all_mats[s] = mats
 
-        # Expand and reshape the (nonempty) left and right matrices
-        lr_stack = [None, None]
-        for s in range(2):
-            if lr_mats[s].nelement() > 0:
-                lr_stack[s] = lr_mats[s].squeeze().unsqueeze(1).expand(
-                                       [batch_size, output_dim, D, D])
-                lr_stack[s] = lr_stack[s].contiguous().view(
-                                        [batch_size*output_dim, D, D])
-        left_stack, right_stack = lr_stack
 
-        # Perform the actual contraction of nonempty mats with the label tensor
+        # The following just contracts left_mats, label_cores, and right_mats
+        # using expanding, reshaping, and batch multiplication
+        left_mats, right_mats = all_mats
         label_cores = label_cores.view([batch_size*output_dim, D, D])
-        if left_stack is not None:
-            label_cores = torch.bmm(left_stack, label_cores)
-        if right_stack is not None:
-            label_cores = torch.bmm(label_cores, right_stack)
+
+        # Left contraction
+        if left_mats.nelement() > 0:
+                left_mats = left_mats.squeeze().unsqueeze(1).expand(
+                                        [batch_size, output_dim, D, D])
+                left_mats = left_mats.contiguous().view(
+                                        [batch_size*output_dim, D, D])
+                label_cores = torch.bmm(left_mats, label_cores)
+
+        # Right contraction
+        if right_mats.nelement() > 0:
+                right_mats = right_mats.squeeze().unsqueeze(1).expand(
+                                        [batch_size, output_dim, D, D])
+                right_mats = right_mats.contiguous().view(
+                                        [batch_size*output_dim, D, D])
+                label_cores = torch.bmm(label_cores, right_mats)
         
         # Taking the partial trace over the bond indices gives the outputs in
-        # a way which works for both open and periodic boundary conditions
+        # a manner which works for both open and periodic boundary conditions
         label_cores = label_cores.view([batch_size, output_dim, D*D])
         eye_vecs = torch.eye(D).view(D*D).unsqueeze(0).expand(
                                 [batch_size, D*D]).unsqueeze(2)
+
         batch_output = torch.bmm(label_cores, eye_vecs)
 
         return batch_output.squeeze()
@@ -445,13 +514,13 @@ class MPSModule(nn.Module):
     def _change_dynamic_mode(self, new_mode):
         """
         NOTE: Even when merging the label tensor with a core tensor on its 
-              left, the resultant shape is *still* [D, D, output_dim, d].
+              left, the resultant shape is STILL [D, D, output_dim, d].
               This might involve some permuting of indices, no big deal.
 
               Also, our dynamic label core will ALWAYS have the shape
               [D, D, output_dim, d], even when it isn't contracted with any
               input data. In that case, have dyn_label_core[:, :, :, 0] hold
-              the actual core, the rest can be zero.
+              the actual core, the rest should be zero.
         """
         pass
 

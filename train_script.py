@@ -10,8 +10,8 @@ from misc import convert_to_onehot, joint_shuffle
 # Experimental parameters
 length = 28
 size = length**2
-num_train_imgs = 1000
-num_test_imgs = 1000
+num_train_imgs = 100
+num_test_imgs = 100
 D = 10
 d = 2
 epochs = 10
