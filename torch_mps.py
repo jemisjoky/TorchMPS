@@ -16,7 +16,7 @@ from math import ceil
       automatically changes 'dynamic_mode', a flag which is either 'merge_left'
       or 'merge_right', for adjusting different sets of bonds.
 
-        * Initialize new parameters and flags in __init__(), make sure to
+ [DONE] * Initialize new parameters and flags in __init__(), make sure to
           set defaults appropriately. Before doing this, think of the geometry
           of the new system and how many contracted core tensors you'll need.
 
@@ -26,7 +26,7 @@ from math import ceil
           mode change), we also need to toggle the trainability of the 
           different parameters.
 
-        * Change _contract_batch_input() to contract according to our current
+ [DONE] * Change _contract_batch_input() to contract according to our current
           train mode. This will now return not just base matrices, but also
           our label matrix. It is also where most of the geometry of the 
           problem comes in, so work out those details first (during __init__
@@ -42,14 +42,25 @@ from math import ceil
       mode in the presence of periodic boundary conditions. 
       However, 'serial' is D times faster (if less parallelizable). Working 
       with just one GPU, the batch-level parallelization is probably enough.
+"""
 
-    * Add 'no_embed' option, where our batch inputs are taken as vectors and
-      no embedding map is explicitly defined
-
+"""
+VALID_ARGS = {'args':   If we want to pass arguments as a single dictionary,
+                        include them as key: value pairs in args,
+                 'd':   Dimension of the local embedding space at each site,
+                'bc':   Boundary conditions, either 'open' (default) or 
+                        'periodic',
+        'label_site':   Location of label core in MPS, must satisfy
+                        0 <= label_site <= size (default = size // 2),
+'weight_init_method':   Preferred method for initializing our core weights,
+                        can be either 'random' or 'random_eye' (default),
+ 'weight_init_scale':   The standard deviation for initialization methods,
+        'train_mode':   Initial training mode, either 'static' (default) or
+                        'dynamic'}
 """
 
 class MPSModule(nn.Module):
-    def __init__(self, size, D=20, d=2, output_dim=10, **args):
+    def __init__(self, size, D=20, output_dim=10, **args):
         """
         Define variables for holding our trainable MPS cores
         """
@@ -59,30 +70,34 @@ class MPSModule(nn.Module):
         self.size = size
         # Global (maximum) bond dimension
         self.D = D 
-        # Dimension of local embedding space
-        self.d = d
         # Dimension of our module output (when used for classification,
         # this is the number of classification labels)
         self.output_dim = output_dim
 
         # If args includes a dict `args`, add its contents to args
-        if 'args' in args.keys():
+        if 'args' in args:
             args.update(args['args'])
             del args['args']
 
+        # Dimension of local embedding space
+        if 'd' in args:
+            d = args['d']
+        else:
+            d = 2
+        self.d = d
+
         # Specify open or periodic boundary conditions for the MPS
-        if 'bc' in args.keys():
-            if args['bc'] in ['open', 'periodic']:
-                bc = args['bc']
-            else:
+        if 'bc' in args:
+            bc = args['bc']
+            if args['bc'] not in ['open', 'periodic']:
                 raise ValueError("Unrecognized value for option 'bc': "
-                                 f"{args['bc']}")
+                                f"{args['bc']}, must be 'open' or 'periodic'")
         else:
             bc = 'open'
         self.bc = bc
 
         # Set location of the label site within the MPS
-        if 'label_site' in args.keys():
+        if 'label_site' in args:
             label_site = args['label_site']
             if not (0 <= label_site and label_site <= size):
                 raise ValueError("label_site must be between 0 and size="
@@ -98,8 +113,8 @@ class MPSModule(nn.Module):
 
         # Method used to initialize our tensor weights, either
         # 'random' or 'random_eye' (default 'random_eye')
-        if 'weight_init_method' in args.keys():
-            if 'weight_init_scale' in args.keys():
+        if 'weight_init_method' in args:
+            if 'weight_init_scale' in args:
                 init_method = args['weight_init_method']
                 init_std = args['weight_init_scale']
             else:
@@ -148,19 +163,16 @@ class MPSModule(nn.Module):
 
         # train_mode is either 'static' or 'dynamic', while dynamic_mode
         # can be 'no_merge', 'merge_left', or 'merge_right'
-        self.train_mode = 'static'
+        if 'train_mode' in args:
+            train_mode = args['train_mode']
+            if train_mode not in ['static', 'dynamic']:
+                raise ValueError("Unrecognized value for option 'train_mode': "
+                                f"{train_mode}, must be 'static' or 'dynamic'")
+        else:
+            train_mode = 'static'
+
+        self.train_mode = train_mode
         self.dynamic_mode = 'no_merge'
-
-
-
-
-        # DELETE THIS
-        self.train_mode = 'dynamic'
-        self.dynamic_mode = 'merge_right'
-
-
-
-
 
         # Effective size and label site after merging cores in dynamic mode
         self.dyn_size = (size + (1 if bc == 'open' else 0)) // 2
@@ -175,11 +187,15 @@ class MPSModule(nn.Module):
 
         # Each input datum increments train_counter by 1, and after reaching
         # toggle_threshold, dynamic_mode is toggled between 'even' and 'odd'
-        self.train_counter = -1
+        self.train_counter = 0
         self.toggle_threshold = 1000
 
         # Sets truncation during un-merging process
         self.svd_cutoff = 1e-10
+
+        # Make sure our merged cores are properly initialized
+        if train_mode == 'dynamic':
+            self._update_dynamic_mode()
 
     def _contract_batch_input(self, batch_input):
         """
@@ -320,26 +336,22 @@ class MPSModule(nn.Module):
 
             # Filler data for padding odd_pixels if we have edge cases
             padding_pixel = torch.zeros([1, 1, d])
-            padding_pixel[:, :, 0] = 1
+            padding_pixel[0, 0, 0] = 1
             padding_pixel = padding_pixel.expand([1, batch_size, d])
             
-            # Adjust odd_pixels to handle different edge cases
+            # Adjust even_pixels and odd_pixels to handle different edge cases
             if lone_left_core:
-                odd_pixels.insert(0, padding_pixel)
+                even_pixels.insert(0, padding_pixel)
+                odd_pixels.insert(0, batch_input[:1])
             if lone_right_core:
                 odd_pixels.append(padding_pixel)
             if wrap_around:
-                odd_pixels.append(batch_input[0])
+                odd_pixels.append(batch_input[:1])
 
             # Bring our pixels together and reshape for batch multiplication
             even_pixels = torch.cat(even_pixels)
             odd_pixels = torch.cat(odd_pixels)
 
-            print(even_pixels.shape)
-            print(f"lone_left_core = {lone_left_core}")
-            print(f"lone_right_core = {lone_right_core}")
-            print(f"wrap_around = {wrap_around}")
-            
             even_pixels = even_pixels.view([dyn_size*batch_size, d, 1])
             odd_pixels = odd_pixels.view([dyn_size*batch_size, d, 1])
             
@@ -396,17 +408,11 @@ class MPSModule(nn.Module):
                 [batch_size, output_dim].
         
         TODO:
-            (1) Check value of train_counter and possibly switch dynamic modes 
-                (1a) Write method to change train modes
-                (1b) Write method to change dynamic modes
-            
-            (2) [BIG TASK] Check contract_mode to see if I should run the 
+            (1) [BIG TASK] Check contract_mode to see if I should run the 
                 current algorithm ('parallel'), or a new 'serial' algorithm
-                (2a) Write serial contraction algorithm with batch parallelism
-                (2b) See if you can refactor everything so the two contraction 
+                (1a) Write serial contraction algorithm with batch parallelism
+                (1b) See if you can refactor everything so the two contraction 
                      algorithms are stored as two different (internal) methods
-            
-            (3) (Output should remain the same with all of these changes)
         """
         size, D, d = self.size, self.D, self.d
         output_dim = self.output_dim
@@ -429,6 +435,7 @@ class MPSModule(nn.Module):
         if train_mode == 'dynamic':
             size = self.dyn_size
             label_site = self.dyn_label_site
+            self._update_dynamic_mode()
         else:
             label_site = self.label_site
 
@@ -504,14 +511,53 @@ class MPSModule(nn.Module):
         eye_vecs = torch.eye(D).view(D*D).unsqueeze(0).expand(
                                 [batch_size, D*D]).unsqueeze(2)
 
-        batch_output = torch.bmm(label_cores, eye_vecs)
+        batch_output = torch.bmm(label_cores, eye_vecs).squeeze()
 
-        return batch_output.squeeze()
+        # Update our counter to reflect the new inputs
+        if train_mode == 'dynamic':
+            self.train_counter += batch_size
+
+        return batch_output
 
     def change_train_mode(self, new_mode):
+        train_mode = self.train_mode
+
+        if new_mode not in ['static', 'dynamic']:
+            raise ValueError(f"Unrecognized value for new_mode: {new_mode}")
+
+        # If we're already in our desired mode, we're done
+        if new_mode == train_mode:
+            return
+
+        # NEED TO UPDATE .requires_grad FOR PARAMETER TENSORS
+
+        if new_mode == 'static':
+            self._update_dynamic_mode('no_merge')
+
+            self.train_mode = 'static'
+        elif new_mode == 'dynamic':
+            self._update_dynamic_mode()
+
+            # self.
+
+    def _merge_cores(self):
+        base_cores = self.base_cores
+        label_core = self.label_core
+        label_site = self.label_site
+
+
+        merge_list = []
+        dyn_ind = 0
+
+        for ind, base_core in base_cores:
+
+
+
+
+    def _unmerge_cores(self):
         pass
 
-    def _change_dynamic_mode(self, new_mode):
+    def change_dynamic_mode(self, new_mode):
         """
         NOTE: Even when merging the label tensor with a core tensor on its 
               left, the resultant shape is STILL [D, D, output_dim, d].
@@ -521,8 +567,41 @@ class MPSModule(nn.Module):
               [D, D, output_dim, d], even when it isn't contracted with any
               input data. In that case, have dyn_label_core[:, :, :, 0] hold
               the actual core, the rest should be zero.
+
+        TODO:
+            (1) Check value of train_counter and possibly switch dynamic modes 
+                
         """
-        pass
+        train_mode = self.train_mode
+        dynamic_mode = self.dynamic_mode
+        train_counter = self.train_counter
+        toggle_threshold = self.toggle_threshold
+
+        # If we're in a merged mode and we haven't hit threshold, we're good
+        if train_mode == 'static' or (train_counter < toggle_threshold and 
+                                      dynamic_mode != 'no_merge'):
+            return
+        elif dynamic_mode in ['merge_left', 'merge_right']:
+            # SEPARATE TENSORS, CHANGE dynamic_mode TO no_merge
+            pass
+
+            # Our unmerged cores are now updated
+            self.train_counter = 0
+            self.dynamic_mode = 'no_merge'
+
+            # Unless we've specifically requested to remain un-merged, call
+            # _update_dynamic_mode again to merge cores the other way
+            if new_mode != 'no_merge':
+                other_mode = 'merge_right' if dynamic_mode == 'merge_left' \
+                             else 'merge_left'
+                self._update_dynamic_mode(other_mode)
+
+        # We need to merge tensors and switch to 
+        elif dynamic_mode == 'no_merge':
+            assert train_counter == 0
+            # MERGE TENSORS, CHANGE dynamic_mode TO new_mode
+            pass
+
 
     def num_correct(self, input_data, labels, batch_size=100):
         """

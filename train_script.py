@@ -13,14 +13,14 @@ size = length**2
 num_train_imgs = 100
 num_test_imgs = 100
 D = 10
-d = 2
 epochs = 10
 batch_size = 100            # Size of minibatches
 num_labels = 10             # Always 10 for MNIST
 loss_type = 'crossentropy'  # Either 'mse' or 'crossentropy'
 args = {'bc': 'open',
         'weight_init_method': 'random_eye',
-        'weight_init_scale': 0.01}
+        'weight_init_scale': 0.01,
+        'train_mode': 'dynamic'}
 
 batches = num_train_imgs // batch_size
 if batches == 0:
@@ -66,7 +66,7 @@ print("Using bond dimension D =", D)
 print()
 
 # Build our MPS classifier using our chosen parameters
-classifier = MPSModule(size=size, D=D, d=d, output_dim=num_labels, args=args)
+classifier = MPSModule(size=size, D=D, output_dim=num_labels, args=args)
 
 if use_gpu:
     classifier = classifier.cuda(device=device)
