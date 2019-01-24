@@ -5,34 +5,7 @@ import torch.nn as nn
 from math import ceil
 
 """ TODO ITEMS
-    
-
-
-NOTE: When writing the reduction engine for a generic MPS, the difference 
-      between parallel and serial evaluation is this: For parallel, replace 
-      each item in our reduction list by item.reduce(). This will generally be
-      a no-op, but I'm making the convention that all parallel-specific code
-      will be implemented in reduce.
-
-      reduce() does the job of taking our composite Reducible and returning an 
-      atomic reducible, for which batch-level parallelization is all we have.
-
-      l_mult() and r_mult() in composite reducibles are therefore serial-only
-      methods, and don't ever have to check for our evaluation strategy.
-
-      I also want to avoid implementing any non-necessary reduction operations,
-      so write the logic of l_mult() and r_mult() in this way. In particular,
-      put the burden on more complex reducibles to implement a reduction 
-      strategy for simpler reducibles. Simple reducibles should only be called
-      to reduce equally simple (or strictly simpler) reducibles. The one 
-      exception here is Scalar, which can easily multiply any reducible.
-
-      Also, I should make sure MatRegion.x_mult only ever gets called with an
-      input from SingleVec. This should be pretty easy, except for...
-
-      ...periodic boundary conditions, which could be a little tricky to 
-      manage here. Oh, when our boundary conditions are open, just insert
-      SingleVec reducibles on both ends, and reduce to a scalar
+    * 
 """
 
 """
