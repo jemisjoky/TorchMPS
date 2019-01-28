@@ -5,10 +5,10 @@ import torch.nn as nn
 from math import ceil
 
 """ TODO ITEMS
-    
+    * 
 
 
-NOTE: When writing the reduction engine for a generic MPS, the difference 
+NOTE: When writing the contraction engine for a generic MPS, the difference 
       between parallel and serial evaluation is this: For parallel, replace 
       each item in our reduction list by item.reduce(). This will generally be
       a no-op, but I'm making the convention that all parallel-specific code
