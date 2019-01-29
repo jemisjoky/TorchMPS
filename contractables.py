@@ -11,6 +11,8 @@ TODO:
       operations
     
 """
+import torch
+
 class Contractable:
     """
     Container for tensors with labeled indices and a global batch size
@@ -43,18 +45,18 @@ class Contractable:
         batch_dim = tensor.size(0)
 
         # Expand along a new batch dimension if needed
-        if ('B' not in bond_string and str_len == num_dim) or \
-           ('B' == bond_string[0] and str_len == num_dim + 1):
+        if ('b' not in bond_string and str_len == num_dim) or \
+           ('b' == bond_string[0] and str_len == num_dim + 1):
             if global_bs is not None:
                 tensor = tensor.unsqueeze(0).expand([global_bs] + shape)
             else:
                 raise RuntimeError("No batch size given and no previous "
                                    "batch size set")
-            if bond_string[0] != 'B':
-                bond_string = 'B' + bond_string
+            if bond_string[0] != 'b':
+                bond_string = 'b' + bond_string
 
         # Check for correct formatting in bond_string
-        elif bond_string[0] != 'B' or str_len != num_dim:
+        elif bond_string[0] != 'b' or str_len != num_dim:
             raise ValueError("Length of bond string '{bond_string}' "
                             f"({len(bond_string)}) must match order of "
                             f"tensor ({len(shape)})")
@@ -90,7 +92,7 @@ class Contractable:
         # reduce must return a contractable, this is a general way of doing so
         return self
 
-class MatRegion:
+class MatRegion(Contractable):
     """
     A contiguous collection of matrices which are multiplied together
 
@@ -105,7 +107,7 @@ class MatRegion:
                              "[batch_size, num_mats, D, D], or [num_mats,"
                              " D, D] if batch size has already been set")
 
-        super().__init__(mats, bond_string='Bslr')
+        super().__init__(mats, bond_string='bslr')
 
     def __mul__(self, right_vec):
         """
@@ -113,7 +115,7 @@ class MatRegion:
         """
         # The input must be an instance of EdgeVec
         if not isinstance(right_vec, EdgeVec):
-            raise NotImplemented
+            return NotImplemented
 
         mats = self.tensor
         num_mats = mats.size(1)
@@ -121,14 +123,14 @@ class MatRegion:
 
         # Load our vector and matrix batches
         vec = right_vec.tensor.unsqueeze(2)
-        mat_list = torch.chunk(mats, num_mats, 1)[::-1]
+        mat_list = [mat.squeeze(1) for mat in torch.chunk(mats, num_mats, 1)]
 
         # Do the repeated matrix-vector multiplications in right-to-left order
-        for mat in mat_list:
+        for mat in mat_list[::-1]:
             vec = torch.bmm(mat, vec)
 
         # Since we only have a single vector, wrap it as a EdgeVec
-        return EdgeVec(vec.squeeze(2))
+        return EdgeVec(vec.squeeze(2), is_left_vec=False)
 
     def __rmul__(self, left_vec):
         """
@@ -136,7 +138,7 @@ class MatRegion:
         """
         # The input must be an instance of EdgeVec
         if not isinstance(left_vec, EdgeVec):
-            raise NotImplemented
+            return NotImplemented
 
         mats = self.tensor
         num_mats = mats.size(1)
@@ -144,14 +146,14 @@ class MatRegion:
 
         # Load our vector and matrix batches
         vec = left_vec.tensor.unsqueeze(1)
-        mat_list = torch.chunk(mats, num_mats, 1)
+        mat_list = [mat.squeeze(1) for mat in torch.chunk(mats, num_mats, 1)]
 
         # Do the repeated matrix-vector multiplications in right-to-left order
         for mat in mat_list:
             vec = torch.bmm(vec, mat)
 
         # Since we only have a single vector, wrap it as a EdgeVec
-        return EdgeVec(vec.squeeze(1))
+        return EdgeVec(vec.squeeze(1), is_left_vec=True)
 
     def reduce(self):
         """
@@ -175,17 +177,16 @@ class MatRegion:
             odd_mats = mats[:, 1:nice_size:2].contiguous()
             leftover = mats[:, nice_size:]
 
-            # Could use einsum here, but this is probably faster
-            even_mats = even_mats.view([batch_size * half_size, D, D])
-            odd_mats = odd_mats.view([batch_size * half_size, D, D])
-            mats = torch.cat([torch.bmm(even_mats, odd_mats), leftover], 1)
+            # Multiply together all pairs of matrices (except leftovers)
+            mats = torch.einsum('bslu,bsur->bslr', [even_mats, odd_mats])
+            mats = torch.cat([mats, leftover], 1)
 
             size = half_size + int(odd_size)
 
         # Since we only have a single matrix, wrap it as a SingleMat
         return SingleMat(mats.squeeze(1))
 
-class OutputCore:
+class OutputCore(Contractable):
     """
     A single MPS core with no input and a single output index
     """
@@ -196,7 +197,7 @@ class OutputCore:
                              "output_dim, D_l, D_r], or [output_dim, "
                              "D_l, D_r] if batch size has already been set")
 
-        super().__init__(core, bond_string='Bolr')
+        super().__init__(core, bond_string='bolr')
 
     def __mul__(self, right_contractable):
         """
@@ -217,7 +218,7 @@ class OutputCore:
         """
         return self
 
-class SingleMat:
+class SingleMat(Contractable):
     """
     A batch of matrices associated with a single location in our MPS
     """
@@ -228,7 +229,7 @@ class SingleMat:
                              "D_l, D_r], or else [D_l, D_r] if batch size "
                              "has already been set")
 
-        super().__init__(mat, bond_string='Blr')
+        super().__init__(mat, bond_string='blr')
 
     def __mul__(self, right_contractable):
         """
@@ -236,7 +237,7 @@ class SingleMat:
         """
         # The input must be an instance of EdgeVec or SingleMat
         if not isinstance(right_contractable, (EdgeVec, SingleMat)):
-            raise NotImplemented
+            return NotImplemented
         is_vec = isinstance(right_contractable, EdgeVec)
 
         left_mat = self.tensor
@@ -262,7 +263,7 @@ class SingleMat:
         """
         # The input must be an instance of EdgeVec
         if not isinstance(left_vec, EdgeVec):
-            raise NotImplemented
+            return NotImplemented
 
         mat = self.tensor
         left_vec = left_vec.tensor.unsqueeze(1)
@@ -274,7 +275,7 @@ class SingleMat:
         # Since we only have a single vector, wrap it as a EdgeVec
         return EdgeVec(vec.squeeze(1))
 
-class EdgeVec:
+class EdgeVec(Contractable):
     """
     A batch of vectors associated with an edge of our MPS
 
@@ -290,7 +291,7 @@ class EdgeVec:
                              "has already been set")
 
         # EdgeVecs on left edge will have a right-facing bond, and vice versa
-        bond_string = 'B' + ('r' if is_left_vec else 'l')
+        bond_string = 'b' + ('r' if is_left_vec else 'l')
         super().__init__(vec, bond_string=bond_string)
 
     def __mul__(self, right_vec):
@@ -299,7 +300,7 @@ class EdgeVec:
         """
         # The input must be an instance of EdgeVec
         if not isinstance(right_vec, EdgeVec):
-            raise NotImplemented
+            return NotImplemented
 
         left_vec = self.tensor.unsqueeze(1)
         right_vec = right_vec.tensor.unsqueeze(2)
@@ -311,7 +312,7 @@ class EdgeVec:
         # Since we only have a single scalar, wrap it as a Scalar
         return Scalar(scalar)
 
-class Scalar:
+class Scalar(Contractable):
     """
     A batch of scalars
     """
@@ -328,7 +329,7 @@ class Scalar:
                              "[batch_size], or [] or [1] if batch size has "
                              "been set")
 
-        super().__init__(scalar, bond_string='B')
+        super().__init__(scalar, bond_string='b')
 
     def __mul__(self, contractable):
         """
@@ -338,7 +339,7 @@ class Scalar:
         tensor = contractable.tensor
         bond_string = contractable.bond_string
 
-        out_tensor = einsum(bond_string+',B->'+bond_string, tensor, scalar)
+        out_tensor = einsum(bond_string+',b->'+bond_string, [tensor, scalar])
 
         # Wrap the result in the same class right_contractable belongs to
         contract_class = type(contractable)

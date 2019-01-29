@@ -28,6 +28,8 @@ TODO:
           I'm assuming this will involve some mindless unpacking and repacking
           attributes, but maybe there's something more systematic possible? }
 """
+import torch
+
 class Realizable:
     """
     

@@ -15,26 +15,10 @@ TODO:
     * Modify my trace code to work on arbitrary output contractables. Right now
       it just checks specific cases and applies a type-specific operation
 """
-class Reducible:
-    """
-    An object which can be 'reduced' in some way to get a contractable
+import torch
+from contractables import Contractable, EdgeVec
 
-    This class includes our various procedures to take a collection of 
-    contractables and multiply them all together. When implementing a Pytorch
-    module using TorchMPS, the last step will typically be calling a reduce
-    operation and then returning the tensor associated with the simple output
-    contractable
-
-    The Reducible class itself is just an empty template class, working
-    implementations should just subclass this for type checking
-    """
-    def __init__(self):
-        raise NotImplementedError
-
-    def reduce(self):
-        raise NotImplementedError
-
-class LinearRegion(Reducible):
+class LinearRegion:
     """
     A list of reducibles which can all be multiplied together in order
 
@@ -43,13 +27,13 @@ class LinearRegion(Reducible):
     in a manner set by the open_bc and right_to_left options
     """
     def __init__(self, reducible_list):
-        if not reducible_list:
+        # Check that input list is a list whose entries are reducibles
+        if not isinstance(reducible_list, list) or reducible_list is []:
             raise ValueError("Input to LinearRegion must be nonempty list")
-
         for i, item in enumerate(reducible_list):
-            if not isinstance(item, Reducible):
-                raise ValueError("Inputs to LinearRegion must be reducibles, "
-                                f"but item {i} is not")
+            if not hasattr(item, 'reduce'):
+                raise ValueError("Inputs to LinearRegion must have reduce() "
+                                f"method, but item {i} does not")
 
         self.reducible_list = reducible_list
 
@@ -67,7 +51,7 @@ class LinearRegion(Reducible):
 
         # Reduce our reducibles and put the outputs into contract_list
         for item in reducible_list:
-            if open_bc or not hasattr(item, "__mul__"):
+            if not open_bc or not hasattr(item, "__mul__"):
                 item = item.reduce()
             
             assert hasattr(item, "__mul__")
@@ -85,7 +69,7 @@ class LinearRegion(Reducible):
 
         return contractable
 
-class PeriodicBC(Reducible):
+class PeriodicBC:
     """
     A list of reducibles with periodic boundary conditions
 
@@ -104,10 +88,9 @@ class PeriodicBC(Reducible):
     def reduce(self):
         # Contract linear region to an irreducible contractable
         contractable = self.linear_region.reduce(open_bc=False)
-        tensor = contractable.tensor
-        bond_string = contractable.bond_string
+        tensor, bond_string = contractable.tensor, contractable.bond_string
 
-        # It takes two different indices to trace over the output
+        # It takes a left and a right index to trace over the output
         assert 'l' in bond_string and 'r' in bond_string
 
         # Build einsum string for trace of our tensor
@@ -121,9 +104,9 @@ class PeriodicBC(Reducible):
         ein_str = in_str + "->" + out_str
 
         # Return the trace over linear indices
-        return torch.einsum(ein_str, tensor)
+        return torch.einsum(ein_str, [tensor])
 
-class Open(Reducible):
+class OpenBC:
     """
     A list of reducibles with open boundary conditions
 
@@ -144,10 +127,10 @@ class Open(Reducible):
         red_list = self.reducible_list
 
         # Get size of left and right bond dimensions
-        left_item, right_item = red_list[0], red_list[-1]
-        left_ind, right_ind = left_item.index('l'), right_item.index('r')
+        left_item, right_item = red_list[0].tensor, red_list[-1].tensor
+        left_str, right_str = red_list[0].bond_string, red_list[-1].bond_string
+        left_ind, right_ind = left_str.index('l'), right_str.index('r')
         left_D, right_D = left_item.size(left_ind), right_item.size(right_ind)
-        global_bs = left_item.global_bs
 
         # Build dummy end vectors and insert them at the ends of our list
         left_vec, right_vec = torch.zeros([left_D]), torch.zeros([right_D])
@@ -155,5 +138,6 @@ class Open(Reducible):
         red_list.insert(0, EdgeVec(left_vec, is_left_vec=True))
         red_list.append(EdgeVec(right_vec, is_left_vec=False))
 
-        # Multiply everything in the list together to get our output
-        return red_list.reduce(open_bc=True).tensor
+        # Wrap our list as a LinearRegion and reduce it to get our result
+        linear_region = LinearRegion(red_list)
+        return linear_region.reduce(open_bc=True).tensor
