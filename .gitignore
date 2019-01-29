@@ -7,3 +7,5 @@ slurm-*
 
 # MNIST data
 mnist/
+
+zzz_test.py

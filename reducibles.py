@@ -15,8 +15,6 @@ TODO:
     * Modify my trace code to work on arbitrary output contractables. Right now
       it just checks specific cases and applies a type-specific operation
 """
-from contractables import LinearContractable
-
 class Reducible:
     """
     An object which can be 'reduced' in some way to get a contractable
@@ -42,7 +40,7 @@ class LinearRegion(Reducible):
 
     Calling reduce on a LinearRegion instance will simply reduce every item
     to a linear contractable, before multiplying all such contractables 
-    in a manner set by the parallel_reduce and right_to_left options
+    in a manner set by the open_bc and right_to_left options
     """
     def __init__(self, reducible_list):
         if not reducible_list:
@@ -55,93 +53,107 @@ class LinearRegion(Reducible):
 
         self.reducible_list = reducible_list
 
-    def reduce(self, parallel_reduce=True, right_to_left=False):
+    def reduce(self, open_bc, right_to_left=False):
         """
         Reduce all the reducibles in our list before multiplying them together
 
-        If parallel_reduce is False, reduce is only called on items which
-        aren't already a LinearContractable. If right_to_left is True, the 
-        multiplication proceeds in right-to-left order
+        If open_bc is False, reduce is only called on items which can't be 
+        linearly contracted together. If right_to_left is True, multiplication 
+        is done right to left. This doesn't change the result, but might be 
+        more efficient in some situations
         """
+        reducible_list = self.reducible_list
         contract_list = []
 
         # Reduce our reducibles and put the outputs into contract_list
         for item in reducible_list:
-            if parallel_reduce or not isinstance(item, LinearContractable):
+            if open_bc or not hasattr(item, "__mul__"):
                 item = item.reduce()
+            
+            assert hasattr(item, "__mul__")
             contract_list.append(item)
 
-        # Reverse if we're multiplying right-to-left
+        # Multiply together contractables in the correct order 
         if right_to_left:
-            contract_list = contract_list[::-1]
+            contractable = contract_list[-1]
+            for item in contract_list[-2::-1]:
+                contractable = item * contractable
+        else:
+            contractable = contract_list[0]
+            for item in contract_list[1:]:
+                contractable = contractable * item
 
-        # Now multiply together all the contractables in contract_list
-        contractable = contract_list[:1]
-        for item in contract_list[1:]:
-            contractable = contractable * item
-
-        assert isinstance(contractable, LinearContractable)
         return contractable
 
 class PeriodicBC(Reducible):
     """
     A list of reducibles with periodic boundary conditions
 
-    Calling reduce on a PeriodicBC instance will proceed in the same manner as
-    LinearRegion, followed by tracing over the left and right bonds to obtain
-    an output contractable
+    Calling reduce on a PeriodicBC instance will proceed as in LinearRegion, 
+    followed by a trace over the left and right bonds to get output tensor
     """
     def __init__(self, reducible_list):
-        # We'll typically get a list, although it's possible to feed in a 
-        # LinearRegion instance instead
-        if not isinstance(reducible_list, LinearRegion):
+        # We'll typically get a list, but LinearRegions are OK too
+        if isinstance(reducible_list, list):
             self.linear_region = LinearRegion(reducible_list)
-        else:
+        elif instance(reducible_list, LinearRegion):
             self.linear_region = reducible_list
+        else:
+            raise TypeError
 
     def reduce(self):
-        contractable = self.linear_region.reduce()
+        # Contract linear region to an irreducible contractable
+        contractable = self.linear_region.reduce(open_bc=False)
         tensor = contractable.tensor
+        bond_string = contractable.bond_string
 
-        # Check the type of my linear contractable and trace appropriately
-        if isinstance(contractable, SingleMat):
-            scalar = torch.einsum("Bll->B", tensor)
-            return Scalar(scalar)
+        # It takes two different indices to trace over the output
+        assert 'l' in bond_string and 'r' in bond_string
 
-        elif isinstance(contractable, OutputCore):
-            vector = torch.einsum("Boll->Bo", tensor)
-            return OutputVec(vector)
+        # Build einsum string for trace of our tensor
+        in_str, out_str = "", ""
+        for c in bond_string:
+            if c in ['l', 'r']:
+                in_str += 'l'
+            else:
+                in_str += c
+                out_str += c
+        ein_str = in_str + "->" + out_str
 
-        # TODO: Write a general routine that works for other contractables
-        else:
-            raise NotImplementedError
+        # Return the trace over linear indices
+        return torch.einsum(ein_str, tensor)
 
 class Open(Reducible):
     """
     A list of reducibles with open boundary conditions
 
     Calling reduce on an OpenBC instance will introduce SingleVec instances on
-    both ends, before contracting all the  in the same manner as
-    LinearRegion, followed by tracing over the left and right bonds to obtain
-    an output contractable
+    both ends, before contracting all the items in the linear region. 
     """
     def __init__(self, reducible_list):
-        self.linear_region = LinearRegion(reducible_list)
-
-    def reduce(self):
-        contractable = self.linear_region.reduce()
-        tensor = contractable.tensor
-
-        # Check the type of my linear contractable and trace appropriately
-        if isinstance(contractable, SingleMat):
-            scalar = torch.einsum("Bll->B", tensor)
-            return Scalar(scalar)
-
-        elif isinstance(contractable, OutputCore):
-            vector = torch.einsum("Boll->Bo", tensor)
-            return OutputVec(vector)
-
-        # TODO: Write a general routine for other contractables
+        # We'll typically get a list, but LinearRegions are OK too
+        if isinstance(reducible_list, LinearRegion):
+            self.reducible_list = reducible_list.reducible_list
+        elif isinstance(reducible_list, list):
+            self.reducible_list = reducible_list
         else:
-            raise NotImplementedError
+            raise TypeError
 
+    def reduce(self, parallel_reduce=False):
+        # Add terminal vectors on each end
+        red_list = self.reducible_list
+
+        # Get size of left and right bond dimensions
+        left_item, right_item = red_list[0], red_list[-1]
+        left_ind, right_ind = left_item.index('l'), right_item.index('r')
+        left_D, right_D = left_item.size(left_ind), right_item.size(right_ind)
+        global_bs = left_item.global_bs
+
+        # Build dummy end vectors and insert them at the ends of our list
+        left_vec, right_vec = torch.zeros([left_D]), torch.zeros([right_D])
+        left_vec[0], right_vec[0] = 1, 1
+        red_list.insert(0, EdgeVec(left_vec, is_left_vec=True))
+        red_list.append(EdgeVec(right_vec, is_left_vec=False))
+
+        # Multiply everything in the list together to get our output
+        return red_list.reduce(open_bc=True).tensor
