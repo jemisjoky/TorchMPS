@@ -55,7 +55,7 @@ class MPSModule(nn.Module):
         """
         Define variables for holding our trainable MPS cores
         """
-        super(MPSModule, self).__init__()
+        super().__init__()
 
         # Number of sites in the MPS
         self.size = size

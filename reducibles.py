@@ -24,7 +24,7 @@ class LinearRegion:
 
     Calling reduce on a LinearRegion instance will simply reduce every item
     to a linear contractable, before multiplying all such contractables 
-    in a manner set by the open_bc and right_to_left options
+    in a manner set by the parallel_reduce and right_to_left options
     """
     def __init__(self, reducible_list):
         # Check that input list is a list whose entries are reducibles
@@ -37,24 +37,24 @@ class LinearRegion:
 
         self.reducible_list = reducible_list
 
-    def reduce(self, open_bc, right_to_left=False):
+    def reduce(self, parallel_reduce, right_to_left=False):
         """
         Reduce all the reducibles in our list before multiplying them together
 
-        If open_bc is False, reduce is only called on items which can't be 
-        linearly contracted together. If right_to_left is True, multiplication 
-        is done right to left. This doesn't change the result, but might be 
-        more efficient in some situations
+        If parallel_reduce is False, reduce is only called on items which can't
+        be linearly contracted together. If right_to_left is True, 
+        multiplication is done right to left. This doesn't change the result, 
+        but could be more efficient in some situations
         """
         reducible_list = self.reducible_list
         contract_list = []
 
         # Reduce our reducibles and put the outputs into contract_list
         for item in reducible_list:
-            if not open_bc or not hasattr(item, "__mul__"):
+            if parallel_reduce or not hasattr(item, "__mul__"):
                 item = item.reduce()
-            
             assert hasattr(item, "__mul__")
+            
             contract_list.append(item)
 
         # Multiply together contractables in the correct order 
@@ -74,20 +74,15 @@ class PeriodicBC:
     A list of reducibles with periodic boundary conditions
 
     Calling reduce on a PeriodicBC instance will proceed as in LinearRegion, 
-    followed by a trace over the left and right bonds to get output tensor
+    followed by a trace over the left and right bonds to get an output tensor
     """
     def __init__(self, reducible_list):
-        # We'll typically get a list, but LinearRegions are OK too
-        if isinstance(reducible_list, list):
-            self.linear_region = LinearRegion(reducible_list)
-        elif instance(reducible_list, LinearRegion):
-            self.linear_region = reducible_list
-        else:
-            raise TypeError
+        self.linear_region = LinearRegion(reducible_list)
 
-    def reduce(self):
+    def reduce(self, right_to_left=False):
         # Contract linear region to an irreducible contractable
-        contractable = self.linear_region.reduce(open_bc=False)
+        contractable = self.linear_region.reduce(parallel_reduce=True, 
+                                                 right_to_left=right_to_left)
         tensor, bond_string = contractable.tensor, contractable.bond_string
 
         # It takes a left and a right index to trace over the output
@@ -122,9 +117,8 @@ class OpenBC:
         else:
             raise TypeError
 
-    def reduce(self, parallel_reduce=False):
-        # Add terminal vectors on each end
-        red_list = self.reducible_list
+    def reduce(self, parallel_reduce=False, right_to_left=False):
+        red_list = self.reducible_list[:]
 
         # Get size of left and right bond dimensions
         left_item, right_item = red_list[0].tensor, red_list[-1].tensor
@@ -139,5 +133,6 @@ class OpenBC:
         red_list.append(EdgeVec(right_vec, is_left_vec=False))
 
         # Wrap our list as a LinearRegion and reduce it to get our result
-        linear_region = LinearRegion(red_list)
-        return linear_region.reduce(open_bc=True).tensor
+        output = LinearRegion(red_list).reduce(parallel_reduce=parallel_reduce,
+                                               right_to_left=right_to_left)
+        return output.tensor
