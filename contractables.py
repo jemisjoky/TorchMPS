@@ -83,9 +83,10 @@ class Contractable:
         index of both, and take a Kronecker product of other indices.
         If rmul is True, contractable is instead multiplied on the right.
         """
-        # This method works for general contractables besides Scalars, which
-        # have a special purpose multiplication (no 'l' and 'r' indices) 
-        if isinstance(contractable, Scalar):
+        # This method works for general Core subclasses besides Scalar (no 'l' 
+        # and 'r' indices), and composite contractables (no tensor attribute)
+        if isinstance(contractable, Scalar) or \
+           not hasattr(contractable, 'tensor'):
             return NotImplemented
 
         tensors = [self.tensor, contractable.tensor]
@@ -163,6 +164,64 @@ class Contractable:
         Set the global batch size for all contractables to None
         """
         Contractable.global_bs = None
+
+class ContractableList(Contractable):
+    """
+    A list of contractables which can all be multiplied together in order
+
+    Calling reduce on a ContractableList instance will simply reduce every item
+    to a linear contractable, before multiplying everything together
+    """
+    def __init__(self, contractable_list):
+        # Check that input list is nonempty and has contractables as entries
+        if not isinstance(contractable_list, list) or contractable_list is []:
+            raise ValueError("Input to ContractableList must be nonempty list")
+        for i, item in enumerate(contractable_list):
+            if not isinstance(item, Contractable):
+                raise ValueError("Input items to ContractableList must be "
+                                f"Contractable instances, but item {i} is not")
+
+        self.contractable_list = contractable_list
+
+    def __mul__(self, contractable, rmul=False):
+        """
+        Multiply another contractable by everything in ContractableList
+        """
+        # Composite contractables can't be contracted together
+        assert hasattr(contractable, 'tensor')
+        output = contractable.tensor
+
+        # Multiply output with everything in CoreList, in the correct order
+        if rmul:
+            for item in self.contractable_list:
+                output = item * output
+        else:
+            for item in self.contractable_list[::-1]:
+                output = output * item
+
+        return output
+
+    def __rmul__(self, contractable):
+        """
+        Multiply another contractable by everything in ContractableList
+        """
+        return self.__mul__(contractable, rmul=True)
+
+    def reduce(self, parallel_eval=False):
+        """
+        Reduce all the contractables in list before multiplying them together
+        """
+        contractable_list = self.contractable_list
+        # For parallel_eval, reduce all contractables in contractable_list
+        if parallel_eval:
+            contractable_list = [item.reduce() for item in contractable_list]
+
+        # Multiply together all the contractables in left-to-right order
+        contractable = contractable_list[0]
+        for item in contractable_list[1:]:
+            contractable = contractable * item
+
+        return contractable
 
 class MatRegion(Contractable):
     """
