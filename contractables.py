@@ -1,8 +1,6 @@
 """
 TODO:
-    * Check that new einsum contraction works correctly
-    * Remove __mul__ and __rmul__ methods when not needed
-    * Can I remove all atomic Contractable subclasses?
+    * Remove auto-resizing capability, and move resizing to realizables
 
     * Write docstrings for everything
     * See if I can use structure of bond strings to simplify multiplication
@@ -84,28 +82,28 @@ class Contractable:
         If rmul is True, contractable is instead multiplied on the right.
         """
         # This method works for general Core subclasses besides Scalar (no 'l' 
-        # and 'r' indices), and composite contractables (no tensor attribute)
+        # and 'r' indices), composite contractables (no tensor attribute), and
+        # MatRegion (multiplication is more complicated)
         if isinstance(contractable, Scalar) or \
-           not hasattr(contractable, 'tensor'):
+           not hasattr(contractable, 'tensor') or \
+           type(contractable) is MatRegion:
             return NotImplemented
 
         tensors = [self.tensor, contractable.tensor]
-        bond_strs = [self.bond_str, contractable.bond_str]
+        bond_strs = [list(self.bond_str), list(contractable.bond_str)]
         lowercases = [chr(c) for c in range(ord('a'), ord('z')+1)]
 
         # Reverse the order of tensors if needed
         if rmul:
             tensors = tensors[::-1]
+            bond_strs = bond_strs[::-1]
 
         # Check that bond strings are in proper format
         for i, bs in enumerate(bond_strs):
             assert bs[0] == 'b'
             assert len(set(bs)) == len(bs)
             assert all([c in lowercases for c in bs])
-            if rmul:
-                assert (i == 0 and 'r' in bs) or (i == 1 and 'l' in bs)
-            else:
-                assert (i == 0 and 'r' in bs) or (i == 1 and 'l' in bs)
+            assert (i == 0 and 'r' in bs) or (i == 1 and 'l' in bs)
 
         # Get used and free characters
         used_chars = set(bond_strs[0]).union(bond_strs[1])
@@ -124,13 +122,15 @@ class Contractable:
         specials.append(sum_char)
 
         # Build bond string of ouput tensor
-        out_str = 'b'
+        out_str = ['b']
         for bs in bond_strs:
-            out_str += ''.join([c for c in bs if c not in specials])
-        out_str += 'l' if 'l' in bond_strs[0] else ''
-        out_str += 'r' if 'r' in bond_strs[1] else ''
+            out_str.extend([c for c in bs if c not in specials])
+        out_str.append('l' if 'l' in bond_strs[0] else '')
+        out_str.append('r' if 'r' in bond_strs[1] else '')
 
         # Build the einsum string for this operation
+        bond_strs = [''.join(bs) for bs in bond_strs]
+        out_str = ''.join(out_str)
         ein_str = f"{bond_strs[0]},{bond_strs[1]}->{out_str}"
 
         # Contract along the linear dimension and return result
@@ -152,18 +152,6 @@ class Contractable:
         trivially possible for any contractable by returning itself
         """
         return self
-
-    def set_batch_size(self, batch_size):
-        """
-        Set the global batch size for all contractables to batch_size
-        """
-        Contractable.global_bs = batch_size
-
-    def unset_batch_size(self):
-        """
-        Set the global batch size for all contractables to None
-        """
-        Contractable.global_bs = None
 
 class ContractableList(Contractable):
     """
@@ -211,17 +199,24 @@ class ContractableList(Contractable):
         """
         Reduce all the contractables in list before multiplying them together
         """
-        contractable_list = self.contractable_list
-        # For parallel_eval, reduce all contractables in contractable_list
+        c_list = self.contractable_list
+        # For parallel_eval, reduce all contractables in c_list
         if parallel_eval:
-            contractable_list = [item.reduce() for item in contractable_list]
+            c_list = [item.reduce() for item in c_list]
 
-        # Multiply together all the contractables in left-to-right order
-        contractable = contractable_list[0]
-        for item in contractable_list[1:]:
-            contractable = contractable * item
+        # Multiply together all the contractables. This multiplies in right to 
+        # left order, but certain inefficient contractions are unsupported.
+        # If we encounter an unsupported operation, then try multiplying from
+        # the left end of the list instead
+        while len(c_list) > 1:
+            try:
+                c_list[-2] = c_list[-2] * c_list[-1]
+                del c_list[-1]
+            except TypeError:
+                c_list[1] = c_list[0] * c_list[1]
+                del c_list[0]
 
-        return contractable
+        return c_list[0]
 
 class MatRegion(Contractable):
     """
@@ -304,8 +299,10 @@ class MatRegion(Contractable):
             half_size = size // 2
             nice_size = 2 * half_size
         
-            even_mats = mats[:, 0:nice_size:2].contiguous()
-            odd_mats = mats[:, 1:nice_size:2].contiguous()
+            # even_mats = mats[:, 0:nice_size:2].contiguous()
+            # odd_mats = mats[:, 1:nice_size:2].contiguous()
+            even_mats = mats[:, 0:nice_size:2]
+            odd_mats = mats[:, 1:nice_size:2]
             leftover = mats[:, nice_size:]
 
             # Multiply together all pairs of matrices (except leftovers)
@@ -323,12 +320,12 @@ class OutputCore(Contractable):
     """
     def __init__(self, tensor):
         # Check the input shape
-        if len(mat.shape) not in [3, 4]:
+        if len(tensor.shape) not in [3, 4]:
             raise ValueError("OutputCore tensors must have shape [batch_size, "
                              "output_dim, D_l, D_r], or else [output_dim, D_l,"
                              " D_r] if batch size has already been set")
 
-        super().__init__(mat, bond_str='bolr')
+        super().__init__(tensor, bond_str='bolr')
 
 class SingleMat(Contractable):
     """
@@ -342,50 +339,6 @@ class SingleMat(Contractable):
                              "has already been set")
 
         super().__init__(mat, bond_str='blr')
-
-    def __mul__(self, right_contractable):
-        """
-        Multiply an input vector or matrix on the left by our matrix
-        """
-        # The input must be an instance of EdgeVec or SingleMat
-        if not isinstance(right_contractable, (EdgeVec, SingleMat)):
-            return NotImplemented
-        is_vec = isinstance(right_contractable, EdgeVec)
-
-        left_mat = self.tensor
-        right_obj = right_contractable.tensor
-        batch_size = left_mat.size(0)
-
-        # Add an extra dimension if we have an input vector
-        if is_vec:
-            right_obj.unsqueeze_(2)
-
-        # Do the batch multiplication
-        out_obj = torch.bmm(left_mat, right_obj)
-
-        # Wrap our output in the appropriate constructor
-        if is_vec:
-            return EdgeVec(out_obj.squeeze(2), is_left_vec=False)
-        else:
-            return SingleMat(out_obj)
-
-    def __rmul__(self, left_vec):
-        """
-        Multiply an input vector on the right with our matrix
-        """
-        # The input must be an instance of EdgeVec
-        if not isinstance(left_vec, EdgeVec):
-            return NotImplemented
-
-        mat = self.tensor
-        left_vec = left_vec.tensor.unsqueeze(1)
-        batch_size = mat.size(0)
-
-        # Do the batch multiplication
-        vec = torch.bmm(left_vec, mat)
-
-        # Since we only have a single vector, wrap it as a EdgeVec
-        return EdgeVec(vec.squeeze(1), is_left_vec=True)
 
 class EdgeVec(Contractable):
     """
