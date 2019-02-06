@@ -203,7 +203,7 @@ class MergedLinearRegion(LinearRegion):
         self.input_counter = 0
         self.threshold = threshold
 
-    def unmerge(self):
+    def unmerge(self, cutoff=1e-10):
         """
         Convert merged modules in self.module_list to unmerged counterparts
         """
@@ -359,6 +359,7 @@ class MergedInput(nn.Module):
     """
     def __init__(self, tensor):
         # Check that our input tensor has the correct shape
+        bond_str = 'slrij'
         shape = tensor.shape
         assert len(shape) == 5
         assert shape[1] == shape[2]
@@ -394,8 +395,30 @@ class MergedInput(nn.Module):
 
         return MatRegion(mats)
 
-    def unmerge(self):
-        pass
+    def unmerge(self, cutoff=1e-10):
+        """
+        Separate the cores in our MergedInput and return an InputRegion
+
+        The length of the resultant InputRegion will be identical to our 
+        original MergedInput (same number of inputs), but its literal_len will
+        be doubled (twice as many individual cores)
+        """
+        bond_str = 'slrij'
+        tensor = self.tensor
+        svd_string = 'lrij->lui,urj'
+        max_D = tensor.size(1)
+
+        # Split every one of the cores into two and add them both to core_list
+        core_list, bond_list = [], []
+        for merged_core in tensor:
+            left_core, right_core, bond_dim = svd_flex(merged_core, svd_string,
+                                                       max_D, cutoff)
+            core_list += [left_core, right_core]
+            bond_list += [bond_dim]
+
+        # Collate the split cores into one tensor and return as an InputRegion
+        tensor = torch.stack(core_list)
+        return [InputRegion(tensor)]
 
     def literal_len(self):
         return len(self)
@@ -500,13 +523,14 @@ class MergedOutput(nn.Module):
 
     Since MergedOutput arises after contracting together an input and an 
     output core, an existing merged tensor is required for initialization
+
+    Args:
+        tensor (Tensor):    Value that our merged core is initialized to
+        left_output (bool): Specifies if the output core is on the left side of
+                            the input core (True), or on the right (False)
+        bond_dims (list):   Bond dimensions of the left and right bonds
     """
-    def __init__(self, tensor, left_output):
-        """
-        left_output specifies if the output core was on the left side of the 
-        input core (True), or on the right (False). This isn't needed here
-        but is essential when unmerging a MergedOutput into two separate cores
-        """
+    def __init__(self, tensor, left_output, bond_dims):
         # Check that our input tensor has the correct shape
         bond_str = 'olri'
         assert len(tensor.shape) == 4
@@ -515,6 +539,7 @@ class MergedOutput(nn.Module):
         # Register our tensor as a Pytorch Parameter
         self.tensor = nn.Parameter(tensor)
         self.left_output = left_output
+        self.bond_dims = bond_dims
 
     def forward(self, input_data):
         """
@@ -533,8 +558,30 @@ class MergedOutput(nn.Module):
 
         return SingleMat(mat)
 
-    def unmerge(self):
-        pass
+    def unmerge(self, cutoff=1e-10):
+        """
+        Split our MergedOutput into an OutputSite and an InputSite
+
+        The non-zero entries of our tensors are dynamically sized according to 
+        the SVD cutoff, but will generally be padded with zeros to give the 
+        new index a regular size.
+        """
+        bond_str = 'olri'
+        tensor = self.tensor
+        left_output = self.left_output
+        if left_output:
+            svd_string = 'olri->olu,uri'
+            max_D = tensor.size(2)
+            output_core, input_core, bond_dim = svd_flex(tensor, svd_string, 
+                                                         max_D, cutoff)
+            return [OutputSite(output_core), InputSite(input_core)]
+
+        else:
+            svd_string = 'olri->our,lui'
+            max_D = tensor.size(1)
+            output_core, input_core, bond_dim = svd_flex(tensor, svd_string, 
+                                                         max_D, cutoff)
+            return [InputSite(input_core), OutputSite(output_core)]
 
     def literal_len(self):
         return 2
@@ -542,51 +589,3 @@ class MergedOutput(nn.Module):
     def __len__(self):
         return 1
 
-def init_tensor(shape, bond_str, init_method):
-    """
-    Initialize a tensor of a given shape
-
-    Args:
-        shape:       The shape of our output parameter tensor
-
-        bond_str:    The bond string describing our output parameter tensor,
-                     which is used in 'random_eye' initialization method
-
-        init_method: The method used to initialize the entries of our tensor.
-                     This can be either a string, or else a tuple whose first
-                     entry is an initialization method and whose second entry
-                     is a scale/standard deviation parameter
-    """
-    # Unpack init_method if needed
-    if not isinstance(init_method, str):
-        init_str = init_method[0]
-        std = init_method[1]
-        init_method = init_str
-    else:
-        std = 0.01
-
-    # Check that bond_str is properly sized and doesn't have repeat indices
-    assert len(shape) == len(bond_str)
-    assert len(set(bond_str)) == len(bond_str)
-
-    if init_method not in ["random_eye", "full_random"]:
-        raise ValueError(f"Unknown initialization method: {init_method}")
-
-    if init_method == 'random_eye':
-        bond_chars = ['l', 'r']
-        assert all([c in bond_str for c in bond_chars])
-
-        # Initialize our tensor as an expanded identity matrix 
-        eye_shape = [shape[i] if c in bond_chars else 1
-                     for i, c in enumerate(bond_str)]
-        bond_dims = [shape[bond_str.index(c)] for c in bond_chars]
-        tensor = torch.eye(bond_dims[0], bond_dims[1]).view(eye_shape)
-        tensor = tensor.expand(shape)
-
-        # Add on a bit of random noise
-        tensor += std * torch.randn(shape)
-
-    elif init_method == 'full_random':
-        tensor = torch.randn(shape)
-
-    return tensor
