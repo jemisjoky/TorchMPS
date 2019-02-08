@@ -236,20 +236,17 @@ def load_HV_data(length):
            torch.from_numpy(test_images), \
            torch.from_numpy(test_labels)
 
-def convert_to_onehot(batch_labels, num_labels):
+def onehot(labels, max_value):
     """
-    Take a list of discrete labels from the set 
-    {0,1,...,num_labels-1} and return a corresponding batch of
-    one-hot encoded vectors
+    Convert a batch of labels from the set {0, 1,..., num_value-1} into their
+    onehot encoded counterparts
     """
-    if max(batch_labels) >= num_labels:
-        raise ValueError("Label values larger than allowed maximum")
+    label_vecs = torch.zeros([len(labels), max_value])
 
-    label_tensor = torch.zeros([len(batch_labels), num_labels])
-    for i, label in enumerate(batch_labels):
-        label_tensor[i, label] = 1
+    for i, label in enumerate(labels):
+        label_vecs[i, label] = 1.
 
-    return label_tensor
+    return label_vecs
 
 def joint_shuffle(input_imgs, input_lbls):
     """

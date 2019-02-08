@@ -8,14 +8,14 @@ class MPS(nn.Module):
     """
     Matrix product state which converts input into a single output vector
     """
-    def __init__(self, input_size, output_dim, bond_dim, d=2, label_site=None,
+    def __init__(self, input_dim, output_dim, bond_dim, d=2, label_site=None,
                  periodic_bc=False, parallel_eval=False, dynamic_mode=False, 
                  cutoff=1e-10, threshold=1000):
         super().__init__()
 
         if label_site is None:
-            label_site = input_size // 2
-        assert label_site >= 0 and label_site <= input_size
+            label_site = input_dim // 2
+        assert label_site >= 0 and label_site <= input_dim
 
         # Our MPS is made of two InputRegions separated by an OutputSite.
         # If our output is at an end of the MPS, we only have one InputRegion
@@ -25,9 +25,9 @@ class MPS(nn.Module):
 
         module_list.append(OutputSite(None, output_dim, bond_dim))
 
-        if label_site < input_size:
+        if label_site < input_dim:
             module_list.append(InputRegion(None, 
-                               input_size - label_site, bond_dim, d))
+                               input_dim - label_site, bond_dim, d))
 
         # Initialize linear_region according to our dynamic_mode specification
         if dynamic_mode:
@@ -38,9 +38,9 @@ class MPS(nn.Module):
         else:
             self.linear_region = LinearRegion(module_list, periodic_bc,
                                               parallel_eval)
-        assert len(self.linear_region) == input_size
+        assert len(self.linear_region) == input_dim
 
-        self.input_size = input_size
+        self.input_dim = input_dim
         self.output_dim = output_dim
         self.label_site = label_site
         self.bond_dim = bond_dim
@@ -56,14 +56,14 @@ class MPS(nn.Module):
         Embed pixels of input_data into separate d-dimensional spaces
 
         Args:
-            input_data (Tensor):    Input with shape [batch_size, input_size]
+            input_data (Tensor):    Input with shape [batch_size, input_dim]
 
         Returns:
             embedded_data (Tensor): Input embedded into a tensor with shape
-                                    [batch_size, input_size, d]
+                                    [batch_size, input_dim, d]
         """
         assert len(input_data.shape) == 2
-        assert input_data.size(1) == self.input_size
+        assert input_data.size(1) == self.input_dim
 
         embedded_shape = list(input_data.shape) + [self.d]
         embedded_data = torch.empty(embedded_shape)
@@ -84,7 +84,7 @@ class MPS(nn.Module):
         """
         Returns the number of input sites, which is the required input size
         """
-        return self.input_size
+        return self.input_dim
 
     def forward(self, input_data):
         """
@@ -122,7 +122,7 @@ class LinearRegion(nn.Module):
         Contract input with list of MPS cores and return result as contractable
 
         Args:
-            input_data (Tensor): Input with shape [batch_size, input_size, d]
+            input_data (Tensor): Input with shape [batch_size, input_dim, d]
         """
         # Check that input_data has the correct shape
         assert len(input_data.shape) == 3
@@ -395,7 +395,7 @@ class MergedLinearRegion(LinearRegion):
         its parameter tensors.
 
         Args:
-            input_data (Tensor): Input with shape [batch_size, input_size, d]
+            input_data (Tensor): Input with shape [batch_size, input_dim, d]
         """
         # If we've hit our threshold, flip the merge state of our tensors
         if self.input_counter >= self.threshold:
@@ -423,13 +423,13 @@ class InputRegion(nn.Module):
     """
     Contiguous region of MPS cores which takes in a collection of input data
     """
-    def __init__(self, tensor=None, input_size=None, bond_dim=None, d=None):
+    def __init__(self, tensor=None, input_dim=None, bond_dim=None, d=None):
         super().__init__()
         bond_str = 'slri'
 
         # If it isn't given, initialize our site-indexed core tensor
         if tensor is None:
-            shape = [input_size, bond_dim, bond_dim, d]
+            shape = [input_dim, bond_dim, bond_dim, d]
             tensor = init_tensor(shape, bond_str, 'random_eye')
 
         # Register our tensor as a Pytorch Parameter
@@ -440,7 +440,7 @@ class InputRegion(nn.Module):
         Contract input with MPS cores and return result as a MatRegion
 
         Args:
-            input_data (Tensor): Input with shape [batch_size, input_size, d]
+            input_data (Tensor): Input with shape [batch_size, input_dim, d]
         """
         # Check that input_data has the correct shape
         tensor = self.tensor
@@ -534,8 +534,8 @@ class MergedInput(nn.Module):
         Contract input with merged MPS cores and return result as a MatRegion
 
         Args:
-            input_data (Tensor): Input with shape [batch_size, input_size, d], 
-                                 where input_size must be even (each merged
+            input_data (Tensor): Input with shape [batch_size, input_dim, d], 
+                                 where input_dim must be even (each merged
                                  core takes 2 inputs)
         """
         # Check that input_data has the correct shape
