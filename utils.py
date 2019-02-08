@@ -74,7 +74,7 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
 
         tensor = tensor.view([left_dim, right_dim])
 
-        # Calculate the SVD and modify so left_mat*diag(svs)*right_mat = tensor
+        # Get SVD and format so that left_mat * diag(svs) * right_mat = tensor
         left_mat, svs, right_mat = torch.svd(tensor)
         right_mat = torch.t(right_mat)
 
@@ -82,7 +82,7 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
         if max_D and len(svs) > max_D:
             svs = svs[:max_D]
             left_mat = left_mat[:, :max_D]
-            right_mat = right_mat
+            right_mat = right_mat[:max_D]
         elif max_D and len(svs) < max_D:
             copy_svs = torch.zeros([max_D])
             copy_svs[:len(svs)] = svs
@@ -92,18 +92,20 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
             copy_right[:right_mat.size(0)] = right_mat
             svs, left_mat, right_mat = copy_svs, copy_left, copy_right
 
-        # Find the truncation point and truncate everything
+        # Find the truncation point relative to our singular value cutoff
         truncation = 0
         for s in svs:
             if s < cutoff:
                 break
             truncation += 1
+
+        # Perform the actual truncation
         if max_D:
             svs[truncation:] = 0
             left_mat[:, truncation:] = 0
             right_mat[truncation:] = 0
         else:
-            # If max_D wasn't given, set it to equal the truncation index
+            # If max_D wasn't given, set it to the truncation index
             max_D = truncation
             svs = svs[:truncation]
             left_mat = left_mat[:, :truncation]

@@ -83,7 +83,7 @@ class Contractable:
         """
         # This method works for general Core subclasses besides Scalar (no 'l' 
         # and 'r' indices), composite contractables (no tensor attribute), and
-        # MatRegion (multiplication is more complicated)
+        # MatRegion (multiplication isn't just simple index contraction)
         if isinstance(contractable, Scalar) or \
            not hasattr(contractable, 'tensor') or \
            type(contractable) is MatRegion:
@@ -133,10 +133,20 @@ class Contractable:
         out_str = ''.join(out_str)
         ein_str = f"{bond_strs[0]},{bond_strs[1]}->{out_str}"
 
-        # Contract along the linear dimension and return result
+        # Contract along the linear dimension to get an output tensor
         out_tensor = torch.einsum(ein_str, [tensors[0], tensors[1]])
 
-        return Contractable(out_tensor, out_str)
+        # Return our output tensor wrapped in an appropriate class
+        if out_str == 'br':
+            return EdgeVec(out_tensor, is_left_vec=True)
+        elif out_str == 'bl':
+            return EdgeVec(out_tensor, is_left_vec=False)
+        elif out_str == 'blr':
+            return SingleMat(out_tensor)
+        elif out_str == 'bolr':
+            return OutputCore(out_tensor)
+        else:
+            return Contractable(out_tensor, out_str)
 
     def __rmul__(self, contractable):
         """
@@ -299,8 +309,6 @@ class MatRegion(Contractable):
             half_size = size // 2
             nice_size = 2 * half_size
         
-            # even_mats = mats[:, 0:nice_size:2].contiguous()
-            # odd_mats = mats[:, 1:nice_size:2].contiguous()
             even_mats = mats[:, 0:nice_size:2]
             odd_mats = mats[:, 1:nice_size:2]
             leftover = mats[:, nice_size:]

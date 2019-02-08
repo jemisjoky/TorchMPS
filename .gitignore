@@ -1,11 +1,9 @@
-# Python environment data
-env/
+# Python environment
 __pycache__/
 
 # Slurm logs
-slurm-*
+#slurm-*
 
 # MNIST data
 mnist/
 
-zzz_test.py

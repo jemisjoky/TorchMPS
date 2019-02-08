@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from utils import init_tensor, svd_flex
 from contractables import SingleMat, MatRegion, OutputCore, ContractableList, \
                           EdgeVec
 
@@ -8,7 +9,8 @@ class MPS(nn.Module):
     Matrix product state which converts input into a single output vector
     """
     def __init__(self, input_size, output_dim, bond_dim, d=2, label_site=None,
-                 periodic_bc=False, parallel_eval=False, dynamic_mode=False):
+                 periodic_bc=False, parallel_eval=False, dynamic_mode=False, 
+                 cutoff=1e-10, threshold=1000):
         super().__init__()
 
         if label_site is None:
@@ -29,8 +31,10 @@ class MPS(nn.Module):
 
         # Initialize linear_region according to our dynamic_mode specification
         if dynamic_mode:
-            self.linear_region = MergedLinearRegion(module_list, periodic_bc,
-                                                    parallel_eval)
+            self.linear_region = MergedLinearRegion(module_list=module_list, 
+                                 periodic_bc=periodic_bc, 
+                                 parallel_eval=parallel_eval, cutoff=cutoff,
+                                 threshold=threshold)
         else:
             self.linear_region = LinearRegion(module_list, periodic_bc,
                                               parallel_eval)
@@ -44,6 +48,8 @@ class MPS(nn.Module):
 
         self.periodic_bc = periodic_bc
         self.dynamic_mode = dynamic_mode
+        self.cutoff = cutoff
+        self.threshold = threshold
 
     def embed_input(self, input_data):
         """
@@ -68,6 +74,12 @@ class MPS(nn.Module):
 
         return embedded_data
 
+    def core_len(self):
+        """
+        Returns the number of cores, which is at least the required input size
+        """
+        return self.linear_region.core_len()
+
     def __len__(self):
         """
         Returns the number of input sites, which is the required input size
@@ -76,9 +88,10 @@ class MPS(nn.Module):
 
     def forward(self, input_data):
         """
-
+        Embed our data and pass it to an MPS with a single output site
         """
-        # IF DOING CUSTOM ROUTING, THAT CODE GOES HERE
+
+        # WHEN IMPLEMENTING ROUTING FOR CUSTOM PATHS, THAT CODE GOES HERE
 
         # Embed our input data before feeding it into our linear region
         input_data = self.embed_input(input_data)
@@ -124,7 +137,10 @@ class LinearRegion(nn.Module):
         contractable_list = []
         for module in self.module_list:
             mod_len = len(module)
-            mod_input = input_data[:, ind:(ind+mod_len)]
+            if mod_len == 1:
+                mod_input = input_data[:, ind]
+            else:
+                mod_input = input_data[:, ind:(ind+mod_len)]
             ind += mod_len
 
             contractable_list.append(module(mod_input))
@@ -175,11 +191,11 @@ class LinearRegion(nn.Module):
 
             return output.tensor
 
-    def literal_len(self):
+    def core_len(self):
         """
         Returns the number of cores, which is at least the required input size
         """
-        return sum([module.literal_len() for module in self.module_list])
+        return sum([module.core_len() for module in self.module_list])
 
     def __len__(self):
         """
@@ -192,39 +208,183 @@ class MergedLinearRegion(LinearRegion):
     Dynamic variant of LinearRegion that periodically rearranges its submodules
     """
     def __init__(self, module_list, periodic_bc=False, parallel_eval=False,
-                 threshold=1000):
+                 cutoff=1e-10, threshold=1000):
         # Initialize a LinearRegion with our given module_list
         super().__init__(module_list, periodic_bc, parallel_eval)
 
         # Merge all of our parameter tensors, which rewrites self.module_list
-        self.merge_left = True
-        self.merge(merge_left=self.merge_left)
+        self.offset = 0
+        self.merge(offset=self.offset)
 
         self.input_counter = 0
         self.threshold = threshold
+        self.cutoff = cutoff
+
+    def merge(self, offset):
+        """
+        Convert unmerged modules in self.module_list to merged counterparts
+
+        This proceeds by first merging all unmerged cores internally, then
+        merging lone cores when possible during a second sweep
+        """
+        assert offset in [0, 1]
+
+        with torch.no_grad():
+            unmerged_list = self.module_list
+
+            # Merge each core internally and add the results to midway_list
+            site_num = offset
+            merged_list = []
+            for core in unmerged_list:
+                assert not isinstance(core, MergedInput)
+                assert not isinstance(core, MergedOutput)
+
+                # Apply internal merging routine if our core supports it
+                if hasattr(core, 'merge'):
+                    merged_list.extend(core.merge(offset=site_num%2))
+                else:
+                    merged_list.append(core)
+
+                site_num += core.core_len()
+
+            # Merge pairs of cores when possible (currently only with 
+            # InputSites), making sure to respect the offset for merging. 
+            while True:
+                mod_num, site_num = 0, 0
+                combined_list = []
+                
+                while mod_num < len(merged_list) - 1:
+                    left_core, right_core = merged_list[mod_num: mod_num+2]
+                    new_core = self.combine(left_core, right_core, 
+                                                       merging=True)
+                    
+                    # If cores aren't combinable, move our sliding window by 1
+                    if new_core is None or offset != site_num % 2:
+                        combined_list.append(left_core)
+                        mod_num += 1
+                        site_num += left_core.core_len()
+                    
+                    # If we get something new, move to the next distinct pair
+                    else:
+                        assert new_core.core_len() == left_core.core_len() + \
+                                                      right_core.core_len()
+                        combined_list.append(new_core)
+                        mod_num += 2
+                        site_num += new_core.core_len()
+                    
+                    # Add the last core if there's nothing to merge it with
+                    if mod_num == len(merged_list)-1:
+                        combined_list.append(merged_list[mod_num])
+                        mod_num += 1
+
+                # We're finished when unmerged_list remains unchanged
+                if len(combined_list) == len(merged_list):
+                    break
+                else:
+                    merged_list = combined_list
+
+            # Finally, replace the unmerged module list with our merged version
+            self.module_list = nn.ModuleList(merged_list)
 
     def unmerge(self, cutoff=1e-10):
         """
         Convert merged modules in self.module_list to unmerged counterparts
+
+        This proceeds by first unmerging all merged cores internally, then
+        combining lone cores where possible
         """
-        # DON'T FORGET TO DO EVERYTHING WITH NO_GRAD
+        with torch.no_grad():
+            merged_list = self.module_list
 
-        module_list = self.module_list
+            # Unmerge each core internally and add results to unmerged_list
+            unmerged_list = []
+            for core in merged_list:
 
-        pass
+                # Apply internal unmerging routine if our core supports it
+                if hasattr(core, 'unmerge'):
+                    unmerged_list.extend(core.unmerge(cutoff))
+                else:
+                    unmerged_list.append(core)
 
-    def merge(self, merge_left):
+            # Combine all combinable pairs of cores. This occurs in several
+            # passes, and for now acts nontrivially only on InputSite instances
+            while True:
+                mod_num = 0
+                combined_list = []
+                
+                while mod_num < len(unmerged_list) - 1:
+                    left_core, right_core = unmerged_list[mod_num: mod_num+2]
+                    new_core = self.combine(left_core, right_core, 
+                                                       merging=False)
+
+                    # If cores aren't combinable, move our sliding window by 1
+                    if new_core is None:
+                        combined_list.append(left_core)
+                        mod_num += 1
+                    # If we get something new, move to the next distinct pair
+                    else:
+                        combined_list.append(new_core)
+                        mod_num += 2
+
+                    # Add the last core if there's nothing to combine it with
+                    if mod_num == len(unmerged_list)-1:
+                        combined_list.append(unmerged_list[mod_num])
+                        mod_num += 1
+
+                # We're finished when unmerged_list remains unchanged
+                if len(combined_list) == len(unmerged_list):
+                    break
+                else:
+                    unmerged_list = combined_list
+
+            # Finally, replace the merged module list with our unmerged version
+            self.module_list = nn.ModuleList(unmerged_list)
+
+    def combine(self, left_core, right_core, merging):
         """
-        Convert unmerged modules in self.module_list to merged counterparts
-        """
-        unmerged_list = self.module_list
-        merged_list = []
+        Combine a pair of cores into a new core using context-dependent rules
 
-        # DON'T FORGET TO DO EVERYTHING WITH NO_GRAD
-        
-        # Cores that admit merging
-        for core in unmerged_list:
-            pass
+        Depending on the types of left_core and right_core, along with whether
+        we're currently merging (merging=True) or unmerging (merging=False), 
+        either return a new core, or None if no rule exists for this context
+        """
+        # Combine an OutputSite with a stray InputSite, return a MergedOutput
+        if merging and ((isinstance(left_core, OutputSite) and 
+                         isinstance(right_core, InputSite)) or
+                            (isinstance(left_core, InputSite) and 
+                            isinstance(right_core, OutputSite))):
+
+            left_site = isinstance(left_core, InputSite)
+            if left_site:
+                new_tensor = torch.einsum('lui,our->olri', [left_core.tensor, 
+                                                            right_core.tensor])
+            else:
+                new_tensor = torch.einsum('olu,uri->olri', [left_core.tensor, 
+                                                            right_core.tensor])
+            return MergedOutput(new_tensor, left_output=(not left_site))
+
+        # Combine an InputRegion with a stray InputSite, return an InputRegion
+        elif not merging and ((isinstance(left_core, InputRegion) and 
+                               isinstance(right_core, InputSite)) or
+                                    (isinstance(left_core, InputSite) and 
+                                    isinstance(right_core, InputRegion))):
+
+            left_site = isinstance(left_core, InputSite)
+            if left_site:
+                left_tensor = left_core.tensor.unsqueeze(0)
+                right_tensor = right_core.tensor
+            else:
+                left_tensor = left_core.tensor
+                right_tensor = right_core.tensor.unsqueeze(0)
+
+            assert left_tensor.shape[1:] == right_tensor.shape[1:]
+            new_tensor = torch.cat([left_tensor, right_tensor])
+
+            return InputRegion(new_tensor)
+
+        # If this situation doesn't belong to the above cases, return None
+        else:
+            return None
 
     def forward(self, input_data):
         """
@@ -237,21 +397,21 @@ class MergedLinearRegion(LinearRegion):
         Args:
             input_data (Tensor): Input with shape [batch_size, input_size, d]
         """
-        # Check if we've hit our threshold yet, and if so flip our merge state
+        # If we've hit our threshold, flip the merge state of our tensors
         if self.input_counter >= self.threshold:
-            self.unmerge()
-            self.merge_left = not self.merge_left
-            self.merge(merge_left=self.merge_left)
+            self.unmerge(cutoff=self.cutoff)
+            self.offset = (self.offset + 1) % 2
+            self.merge(offset=self.offset)
 
-        # Increment our counter and call the real forward method
+        # Increment our counter and call the LinearRegion's forward method
         self.input_counter += input_data.size(0)
         return super().forward(input_data)
 
-    def literal_len(self):
+    def core_len(self):
         """
         Returns the number of cores, which is at least the required input size
         """
-        return sum([module.literal_len() for module in self.module_list])
+        return sum([module.core_len() for module in self.module_list])
 
     def __len__(self):
         """
@@ -293,7 +453,7 @@ class InputRegion(nn.Module):
 
         return MatRegion(mats)
 
-    def merge(self, offset=0):
+    def merge(self, offset):
         """
         Merge all pairs of neighboring cores and return a new list of cores
 
@@ -303,7 +463,7 @@ class InputRegion(nn.Module):
         a MergedInput instance
         """
         assert offset in [0, 1]
-        num_sites = self.literal_len()
+        num_sites = self.core_len()
         parity = num_sites % 2
 
         # Cases with empty tensors might arise in recursion below
@@ -312,28 +472,27 @@ class InputRegion(nn.Module):
 
         # Simplify the problem into one where offset=0 and num_sites is even
         if (offset, parity) == (1, 1):
-            out_list = [self[0], self[1:].merge()[0]]
-            return [x for x in out_list if x is not None]
+            out_list = [self[0], self[1:].merge(offset=0)[0]]
         elif (offset, parity) == (1, 0):
-            out_list = [self[0], self[1:-1].merge()[0], self[-1]]
-            return [x for x in out_list if x is not None]
+            out_list = [self[0], self[1:-1].merge(offset=0)[0], self[-1]]
         elif (offset, parity) == (0, 1):
-            out_list = [self[:-1].merge()[0], self[-1]]
-            return [x for x in out_list if x is not None]
+            out_list = [self[:-1].merge(offset=0)[0], self[-1]]
 
         # The main case of interest, with no offset and an even number of sites
         else:
             tensor = self.tensor
-
             even_cores, odd_cores = tensor[0::2], tensor[1::2]
             assert len(even_cores) == len(odd_cores)
 
             # Multiply all pairs of cores, keeping inputs separate
-            merged_cores = einsum('slui,surj->slrij', [even_cores, odd_cores])
+            merged_cores = torch.einsum('slui,surj->slrij', [even_cores, 
+                                                             odd_cores])
+            out_list = [MergedInput(merged_cores)]
 
-            return [MergedInput(merged_cores)]
+        # Remove empty MergedInputs, which appear in very small InputRegions
+        return [x for x in out_list if x is not None]
 
-    def __getitems__(self, key):
+    def __getitem__(self, key):
         """
         Returns an InputRegion instance sliced along the site index
         """
@@ -344,7 +503,7 @@ class InputRegion(nn.Module):
         else:
             return InputSite(self.tensor[key])
 
-    def literal_len(self):
+    def core_len(self):
         return len(self)
 
     def __len__(self):
@@ -400,7 +559,7 @@ class MergedInput(nn.Module):
         Separate the cores in our MergedInput and return an InputRegion
 
         The length of the resultant InputRegion will be identical to our 
-        original MergedInput (same number of inputs), but its literal_len will
+        original MergedInput (same number of inputs), but its core_len will
         be doubled (twice as many individual cores)
         """
         bond_str = 'slrij'
@@ -420,7 +579,7 @@ class MergedInput(nn.Module):
         tensor = torch.stack(core_list)
         return [InputRegion(tensor)]
 
-    def literal_len(self):
+    def core_len(self):
         return len(self)
 
     def __len__(self):
@@ -462,7 +621,7 @@ class InputSite(nn.Module):
 
         return SingleMat(mat)
 
-    def literal_len(self):
+    def core_len(self):
         return 1
 
     def __len__(self):
@@ -490,28 +649,7 @@ class OutputSite(nn.Module):
         """
         return OutputCore(self.tensor)
 
-    def merge(self, other_core=None, left_output=True):
-        """
-        Merge OutputSite with an InputSite and return a MergedOutput
-
-        If left_output is True, our Output site is on the left side, otherwise 
-        it appears on the right side of the MergedOutput. If no inputs are 
-        given, this just returns our existing OutputSite
-        """
-        if other_core is None:
-            return self
-        assert isinstance(other_core, InputSite)
-
-        if offset == 0:
-            merged_core = torch.einsum('olu,uri->olri',
-                                       [self.tensor, other_core.tensor])
-        else:
-            merged_core = torch.einsum('lui,our->olri',
-                                       [other_core.tensor, self.tensor])
-
-        return [MergedOutput(merged_core, left_output=(offset==0))]
-
-    def literal_len(self):
+    def core_len(self):
         return 1
 
     def __len__(self):
@@ -521,16 +659,15 @@ class MergedOutput(nn.Module):
     """
     Merged MPS core taking in one input datum and returning an output vector
 
-    Since MergedOutput arises after contracting together an input and an 
-    output core, an existing merged tensor is required for initialization
+    Since MergedOutput arises after contracting together an existing input and 
+    output core, an already-merged tensor is required for initialization
 
     Args:
         tensor (Tensor):    Value that our merged core is initialized to
         left_output (bool): Specifies if the output core is on the left side of
                             the input core (True), or on the right (False)
-        bond_dims (list):   Bond dimensions of the left and right bonds
     """
-    def __init__(self, tensor, left_output, bond_dims):
+    def __init__(self, tensor, left_output):
         # Check that our input tensor has the correct shape
         bond_str = 'olri'
         assert len(tensor.shape) == 4
@@ -539,7 +676,6 @@ class MergedOutput(nn.Module):
         # Register our tensor as a Pytorch Parameter
         self.tensor = nn.Parameter(tensor)
         self.left_output = left_output
-        self.bond_dims = bond_dims
 
     def forward(self, input_data):
         """
@@ -554,9 +690,9 @@ class MergedOutput(nn.Module):
         assert input_data.size(1) == tensor.size(3)
 
         # Contract the input with our core tensor
-        mat = torch.einsum('olri,bi->bolr', [tensor, input_data])
+        tensor = torch.einsum('olri,bi->bolr', [tensor, input_data])
 
-        return SingleMat(mat)
+        return OutputCore(tensor)
 
     def unmerge(self, cutoff=1e-10):
         """
@@ -583,9 +719,8 @@ class MergedOutput(nn.Module):
                                                          max_D, cutoff)
             return [InputSite(input_core), OutputSite(output_core)]
 
-    def literal_len(self):
+    def core_len(self):
         return 2
 
     def __len__(self):
         return 1
-
