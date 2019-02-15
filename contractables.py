@@ -245,12 +245,12 @@ class MatRegion(Contractable):
 
         super().__init__(mats, bond_str='bslr')
 
-    def __mul__(self, right_vec):
+    def __mul__(self, edge_vec, rmul=False):
         """
-        Iteratively multiply an input vector on the left with all our matrices
+        Iteratively multiply an input vector with all matrices in MatRegion
         """
         # The input must be an instance of EdgeVec
-        if not isinstance(right_vec, EdgeVec):
+        if not isinstance(edge_vec, EdgeVec):
             return NotImplemented
 
         mats = self.tensor
@@ -258,38 +258,36 @@ class MatRegion(Contractable):
         batch_size = mats.size(0)
 
         # Load our vector and matrix batches
-        vec = right_vec.tensor.unsqueeze(2)
+        dummy_ind = 1 if rmul else 2
+        vec = edge_vec.tensor.unsqueeze(dummy_ind)
         mat_list = [mat.squeeze(1) for mat in torch.chunk(mats, num_mats, 1)]
 
-        # Do the repeated matrix-vector multiplications in right-to-left order
-        for mat in mat_list[::-1]:
-            vec = torch.bmm(mat, vec)
+        # Do the repeated matrix-vector multiplications in the proper order
+        log_norm = 0
+        for i, mat in enumerate(mat_list[::(1 if rmul else -1)], 1):
+            if rmul:
+                vec = torch.bmm(vec, mat)
+            else:
+                vec = torch.bmm(mat, vec)
+
+            # Rescale our vectors to keep the average norm equal to 1
+            # if i % 10 == 0:
+            #     # with torch.no_grad():
+            #     av_norm = sum([torch.norm(v) for v in vec]) / batch_size
+            #     log_norm += torch.log(av_norm)
+            #     vec = vec / av_norm
+
+        # If our normalization isn't too huge (~1e34), then reapply it to vec
+        # if abs(log_norm) < 80:
+        # vec = vec * torch.exp(log_norm)
+        # else:
+        #     print(f"Implicit mult by exp({-log_norm}) to keep normalization")
 
         # Since we only have a single vector, wrap it as a EdgeVec
-        return EdgeVec(vec.squeeze(2), is_left_vec=False)
+        return EdgeVec(vec.squeeze(dummy_ind), is_left_vec=rmul)
 
-    def __rmul__(self, left_vec):
-        """
-        Iteratively multiply an input vector on the right with all our matrices 
-        """
-        # The input must be an instance of EdgeVec
-        if not isinstance(left_vec, EdgeVec):
-            return NotImplemented
-
-        mats = self.tensor
-        num_mats = mats.size(1)
-        batch_size = mats.size(0)
-
-        # Load our vector and matrix batches
-        vec = left_vec.tensor.unsqueeze(1)
-        mat_list = [mat.squeeze(1) for mat in torch.chunk(mats, num_mats, 1)]
-
-        # Do the repeated matrix-vector multiplications in right-to-left order
-        for mat in mat_list:
-            vec = torch.bmm(vec, mat)
-
-        # Since we only have a single vector, wrap it as a EdgeVec
-        return EdgeVec(vec.squeeze(1), is_left_vec=True)
+    def __rmul__(self, edge_vec):
+        return self.__mul__(edge_vec, rmul=True)
 
     def reduce(self):
         """

@@ -90,13 +90,14 @@ class MPS(nn.Module):
         """
         Embed our data and pass it to an MPS with a single output site
         """
-
         # WHEN IMPLEMENTING ROUTING FOR CUSTOM PATHS, THAT CODE GOES HERE
 
         # Embed our input data before feeding it into our linear region
         input_data = self.embed_input(input_data)
+        output = self.linear_region(input_data)
 
-        return self.linear_region(input_data)
+        # return output
+        return torch.abs(output)
 
 class LinearRegion(nn.Module):
     """
@@ -211,7 +212,7 @@ class MergedLinearRegion(LinearRegion):
                  cutoff=1e-10, threshold=1000):
         # Initialize a LinearRegion with our given module_list
         super().__init__(module_list, periodic_bc, parallel_eval)
-
+        
         # Merge all of our parameter tensors, which rewrites self.module_list
         self.offset = 0
         self.merge(offset=self.offset)
@@ -433,7 +434,7 @@ class InputRegion(nn.Module):
             tensor = init_tensor(shape, bond_str, 'random_eye')
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor)
+        self.tensor = nn.Parameter(tensor.contiguous())
 
     def forward(self, input_data):
         """
@@ -527,7 +528,7 @@ class MergedInput(nn.Module):
         super().__init__()
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor)
+        self.tensor = nn.Parameter(tensor.contiguous())
 
     def forward(self, input_data):
         """
@@ -602,7 +603,7 @@ class InputSite(nn.Module):
             tensor = init_tensor(shape, bond_str, 'random_eye')
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor)
+        self.tensor = nn.Parameter(tensor.contiguous())
 
     def forward(self, input_data):
         """
@@ -641,7 +642,7 @@ class OutputSite(nn.Module):
             tensor = init_tensor(shape, bond_str, 'random_eye')
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor)
+        self.tensor = nn.Parameter(tensor.contiguous())
 
     def forward(self, input_data):
         """
@@ -674,7 +675,7 @@ class MergedOutput(nn.Module):
         super().__init__()
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor)
+        self.tensor = nn.Parameter(tensor.contiguous())
         self.left_output = left_output
 
     def forward(self, input_data):
