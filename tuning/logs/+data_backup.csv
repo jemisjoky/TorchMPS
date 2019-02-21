@@ -1,0 +1,1 @@
+experiment_name, lr, init_std, l2_reg, num_train, batch_size, bond_dim, num_epochs, num_test, dynamic_mode, periodic_bc, loss, train_acc, test_acc

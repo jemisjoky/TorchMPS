@@ -1,0 +1,66 @@
+THIS TRIAL'S ALL PARAMETERS
+bond_dim = 15
+dynamic_mode = False
+periodic_bc = True
+init_std = 2.1133756765354464e-08
+num_train = 1000
+num_test = 5000
+batch_size = 100
+num_epochs = 10
+learning_rate = 0.012378322541446954
+l2_reg = 0.0
+
+### Epoch 1 ###
+Average loss for epoch: 204499.281
+Average train accuracy: 0.101
+Runtime so far:         67 sec
+
+### Epoch 2 ###
+Average loss for epoch: 2965514.000
+Average train accuracy: 0.092
+Runtime so far:         130 sec
+
+### Epoch 3 ###
+Average loss for epoch: 156037.406
+Average train accuracy: 0.119
+Runtime so far:         194 sec
+
+### Epoch 4 ###
+Average loss for epoch: 4449.575
+Average train accuracy: 0.070
+Runtime so far:         258 sec
+
+### Epoch 5 ###
+Average loss for epoch: 460.055
+Average train accuracy: 0.075
+Runtime so far:         322 sec
+
+### Epoch 6 ###
+Average loss for epoch: 289.018
+Average train accuracy: 0.088
+Runtime so far:         387 sec
+
+### Epoch 7 ###
+Average loss for epoch: 206.980
+Average train accuracy: 0.108
+Runtime so far:         451 sec
+
+### Epoch 8 ###
+Average loss for epoch: 93.605
+Average train accuracy: 0.117
+Runtime so far:         517 sec
+
+### Epoch 9 ###
+Average loss for epoch: 62.643
+Average train accuracy: 0.112
+Runtime so far:         581 sec
+
+### Epoch 10 ###
+Average loss for epoch: 47.302
+Average train accuracy: 0.108
+Runtime so far:         646 sec
+
+Total runtime:          779 sec
+
+Final loss, Final training accuracy, Final test accuracy
+47.30215072631836, 0.10800000000000001, 0.09940000000000002

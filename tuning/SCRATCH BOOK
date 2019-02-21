@@ -1,0 +1,13 @@
+SCRATCH BOOK
+
+good parameters for non-dynamic mode, periodic bc:
+lr =       1e-{3,4,5}
+init_std = 1e{-15:+5}
+
+good parameters for non-dynamic mode, open bc:
+lr =       1e-{3,4}
+init_std = 1e{-12:-6}
+
+for dynamic mode, let's try:
+lr =       mean:5e-4, std:1e1
+init_std = mean:1e-9, std:1e6

@@ -1,0 +1,13 @@
+THIS TRIAL'S ALL PARAMETERS
+bond_dim = 15
+dynamic_mode = False
+periodic_bc = True
+init_std = 0.0014439716842042996
+num_train = 1000
+num_test = 5000
+batch_size = 100
+num_epochs = 10
+learning_rate = 0.09112824031492943
+l2_reg = 0.0
+
+-1, -1, -1

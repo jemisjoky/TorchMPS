@@ -76,6 +76,7 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
 
         # Get SVD and format so that left_mat * diag(svs) * right_mat = tensor
         left_mat, svs, right_mat = torch.svd(tensor)
+        svs, _ = torch.sort(svs, descending=True)
         right_mat = torch.t(right_mat)
 
         # Decrease or increase our tensor sizes in the presence of max_D

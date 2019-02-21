@@ -5,16 +5,16 @@ from cores import MPS
 from torchvision import transforms, datasets
 
 # MPS parameters
-bond_dim = 10
+bond_dim = 30
 dynamic_mode = False
-periodic_bc = True
+periodic_bc = False
 
 # Training parameters
-num_train = 2000
-num_test = 1000
+num_train = 50000
+num_test = 5000
 batch_size = 100
-num_epochs = 15
-lr = 1e-3
+num_epochs = 40
+lr = 1e-4
 l2_reg = 0.
 
 # Initialize the MPS module

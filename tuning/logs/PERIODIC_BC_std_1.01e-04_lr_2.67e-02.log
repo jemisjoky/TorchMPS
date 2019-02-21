@@ -1,0 +1,76 @@
+THIS TRIAL'S ALL PARAMETERS
+bond_dim = 15
+dynamic_mode = False
+periodic_bc = True
+init_std = 0.00010147013302238617
+num_train = 1000
+num_test = 5000
+batch_size = 100
+num_epochs = 10
+learning_rate = 0.026723173054454197
+l2_reg = 0.0
+
+### Epoch 1 ###
+Average loss for epoch: 1495000809472.000
+Smoothed loss:          1495000809472.000
+Average train accuracy: 0.104
+Runtime so far:         66 sec
+
+### Epoch 2 ###
+Average loss for epoch: 109774187074843035303936.000
+Smoothed loss:          65864514046345672130560.000
+Average train accuracy: 0.084
+Runtime so far:         134 sec
+
+### Epoch 3 ###
+Average loss for epoch: 101794547125481405153280.000
+Smoothed loss:          87422542901026366685184.000
+Average train accuracy: 0.061
+Runtime so far:         204 sec
+
+### Epoch 4 ###
+Average loss for epoch: 107683697192610943729664.000
+Smoothed loss:          99579235475977112911872.000
+Average train accuracy: 0.066
+Runtime so far:         268 sec
+
+### Epoch 5 ###
+Average loss for epoch: 101546804109979754168320.000
+Smoothed loss:          100759782060698250510336.000
+Average train accuracy: 0.076
+Runtime so far:         335 sec
+
+### Epoch 6 ###
+Average loss for epoch: 99462880476004368777216.000
+Smoothed loss:          99981641109881921470464.000
+Average train accuracy: 0.063
+Runtime so far:         402 sec
+
+### Epoch 7 ###
+Average loss for epoch: 97166206795632001155072.000
+Smoothed loss:          98292385925651522125824.000
+Average train accuracy: 0.069
+Runtime so far:         487 sec
+
+### Epoch 8 ###
+Average loss for epoch: 96267882785159663058944.000
+Smoothed loss:          97077684041356406685696.000
+Average train accuracy: 0.067
+Runtime so far:         571 sec
+
+### Epoch 9 ###
+Average loss for epoch: 94003761122893929381888.000
+Smoothed loss:          95233333893158622199808.000
+Average train accuracy: 0.078
+Runtime so far:         637 sec
+
+### Epoch 10 ###
+Average loss for epoch: 93275078703185383129088.000
+Smoothed loss:          94058380779174678757376.000
+Average train accuracy: 0.077
+Runtime so far:         704 sec
+
+Total runtime:          849 sec
+
+Smoothed loss, Final training accuracy, Final test accuracy
+9.405838077917468e+22, 0.077, 0.0868
