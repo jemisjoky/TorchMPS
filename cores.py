@@ -10,7 +10,7 @@ class MPS(nn.Module):
     """
     def __init__(self, input_dim, output_dim, bond_dim, d=2, label_site=None,
                  periodic_bc=False, parallel_eval=False, dynamic_mode=False, 
-                 cutoff=1e-10, threshold=1000, init_std=1e-8):
+                 cutoff=1e-10, threshold=2000, init_std=1e-9):
         super().__init__()
 
         if label_site is None:
@@ -104,7 +104,8 @@ class LinearRegion(nn.Module):
     """
     List of modules which feeds input to each module and returns reduced output
     """
-    def __init__(self, module_list, periodic_bc=False, parallel_eval=False):
+    def __init__(self, module_list, periodic_bc=False, parallel_eval=False,
+                 module_states=None):
         # Check that module_list is a list whose entries are Pytorch modules
         if not isinstance(module_list, list) or module_list is []:
             raise ValueError("Input to LinearRegion must be nonempty list")
@@ -210,17 +211,47 @@ class MergedLinearRegion(LinearRegion):
     Dynamic variant of LinearRegion that periodically rearranges its submodules
     """
     def __init__(self, module_list, periodic_bc=False, parallel_eval=False,
-                 cutoff=1e-10, threshold=1000):
+                 cutoff=1e-10, threshold=2000):
         # Initialize a LinearRegion with our given module_list
         super().__init__(module_list, periodic_bc, parallel_eval)
         
-        # Merge all of our parameter tensors, which rewrites self.module_list
+        # Initialize attributes self.module_list_0 and self.module_list_1 
+        # using the unmerged self.module_list, then redefine the latter in
+        # terms of one of the former lists
         self.offset = 0
         self.merge(offset=self.offset)
+        self.merge(offset=(self.offset+1)%2)
+        self.module_list = getattr(self, f"module_list_{self.offset}")
 
+        # Initialize variables used during switching
         self.input_counter = 0
         self.threshold = threshold
         self.cutoff = cutoff
+
+    def forward(self, input_data):
+        """
+        Contract input with list of MPS cores and return result as contractable
+
+        MergedLinearRegion keeps an input counter of the number of inputs, and
+        when this exceeds its threshold, triggers an unmerging and remerging of
+        its parameter tensors.
+
+        Args:
+            input_data (Tensor): Input with shape [batch_size, input_dim, d]
+        """
+        # If we've hit our threshold, flip the merge state of our tensors
+        if self.input_counter >= self.threshold:
+            self.unmerge(cutoff=self.cutoff)
+            self.offset = (self.offset + 1) % 2
+            self.merge(offset=self.offset)
+            self.input_counter -= self.threshold
+
+            # Point self.module_list to the appropriate merged module
+            self.module_list = getattr(self, f"module_list_{self.offset}")
+
+        # Increment our counter and call the LinearRegion's forward method
+        self.input_counter += input_data.size(0)
+        return super().forward(input_data)
 
     def merge(self, offset):
         """
@@ -285,8 +316,21 @@ class MergedLinearRegion(LinearRegion):
                 else:
                     merged_list = combined_list
 
-            # Finally, replace the unmerged module list with our merged version
-            self.module_list = nn.ModuleList(merged_list)
+            # Finally, update the appropriate merged module list
+            list_name = f"module_list_{offset}"
+            # If the merged module list hasn't been set yet, initialize it
+            if not hasattr(self, list_name):
+                setattr(self, list_name, nn.ModuleList(merged_list))
+            
+            # Otherwise, do an in-place update so that all tensors remain 
+            # properly registered with whatever optimizer we use
+            else:
+                module_list = getattr(self, list_name)
+                assert len(module_list) == len(merged_list)
+                for i in range(len(module_list)):
+                    assert module_list[i].tensor.shape == \
+                           merged_list[i].tensor.shape
+                    module_list[i].tensor[:] = merged_list[i].tensor
 
     def unmerge(self, cutoff=1e-10):
         """
@@ -296,7 +340,8 @@ class MergedLinearRegion(LinearRegion):
         combining lone cores where possible
         """
         with torch.no_grad():
-            merged_list = self.module_list
+            list_name = f"module_list_{self.offset}"
+            merged_list = getattr(self, list_name)
 
             # Unmerge each core internally and add results to unmerged_list
             unmerged_list = []
@@ -339,7 +384,7 @@ class MergedLinearRegion(LinearRegion):
                 else:
                     unmerged_list = combined_list
 
-            # Finally, replace the merged module list with our unmerged version
+            # Finally, add our unmerged module list as a new attribute
             self.module_list = nn.ModuleList(unmerged_list)
 
     def combine(self, left_core, right_core, merging):
@@ -388,27 +433,6 @@ class MergedLinearRegion(LinearRegion):
         else:
             return None
 
-    def forward(self, input_data):
-        """
-        Contract input with list of MPS cores and return result as contractable
-
-        MergedLinearRegion keeps an input counter of the number of inputs, and
-        when this exceeds its threshold, triggers an unmerging and remerging of
-        its parameter tensors.
-
-        Args:
-            input_data (Tensor): Input with shape [batch_size, input_dim, d]
-        """
-        # If we've hit our threshold, flip the merge state of our tensors
-        if self.input_counter >= self.threshold:
-            self.unmerge(cutoff=self.cutoff)
-            self.offset = (self.offset + 1) % 2
-            self.merge(offset=self.offset)
-
-        # Increment our counter and call the LinearRegion's forward method
-        self.input_counter += input_data.size(0)
-        return super().forward(input_data)
-
     def core_len(self):
         """
         Returns the number of cores, which is at least the required input size
@@ -426,7 +450,7 @@ class InputRegion(nn.Module):
     Contiguous region of MPS cores which takes in a collection of input data
     """
     def __init__(self, tensor=None, input_dim=None, bond_dim=None, d=None,
-                 init_std=1e-8):
+                 init_std=1e-9):
         super().__init__()
         bond_str = 'slri'
 
@@ -635,7 +659,7 @@ class OutputSite(nn.Module):
     A single MPS core with no input and a single output index
     """
     def __init__(self, tensor, output_dim=None, D_l=None, D_r=None, 
-                 init_std=1e-8):
+                 init_std=1e-9):
         super().__init__()
         bond_str = 'olr'
 

@@ -1,12 +1,3 @@
-"""
-TODO:
-    * Remove auto-resizing capability, and move resizing to realizables
-
-    * Write docstrings for everything
-    * See if I can use structure of bond strings to simplify multiplication
-      operations
-    
-"""
 import torch
 
 class Contractable:
@@ -78,7 +69,7 @@ class Contractable:
 
         The default behavior is to multiply the 'r' index of this instance
         with the 'l' index of contractable, matching the batch ('b')
-        index of both, and take a Kronecker product of other indices.
+        index of both, and take the outer product of other indices.
         If rmul is True, contractable is instead multiplied on the right.
         """
         # This method works for general Core subclasses besides Scalar (no 'l' 
@@ -167,8 +158,8 @@ class ContractableList(Contractable):
     """
     A list of contractables which can all be multiplied together in order
 
-    Calling reduce on a ContractableList instance will simply reduce every item
-    to a linear contractable, before multiplying everything together
+    Calling reduce on a ContractableList instance will first reduce every item
+    to a linear contractable, and then contract everything together
     """
     def __init__(self, contractable_list):
         # Check that input list is nonempty and has contractables as entries
@@ -183,13 +174,13 @@ class ContractableList(Contractable):
 
     def __mul__(self, contractable, rmul=False):
         """
-        Multiply another contractable by everything in ContractableList
+        Multiply a contractable by everything in ContractableList in order
         """
-        # Composite contractables can't be contracted together
+        # The input cannot be a composite contractable
         assert hasattr(contractable, 'tensor')
         output = contractable.tensor
 
-        # Multiply output with everything in CoreList, in the correct order
+        # Multiply by everything in ContractableList, in the correct order
         if rmul:
             for item in self.contractable_list:
                 output = item * output
@@ -270,19 +261,6 @@ class MatRegion(Contractable):
             else:
                 vec = torch.bmm(mat, vec)
 
-            # Rescale our vectors to keep the average norm equal to 1
-            # if i % 10 == 0:
-            #     # with torch.no_grad():
-            #     av_norm = sum([torch.norm(v) for v in vec]) / batch_size
-            #     log_norm += torch.log(av_norm)
-            #     vec = vec / av_norm
-
-        # If our normalization isn't too huge (~1e34), then reapply it to vec
-        # if abs(log_norm) < 80:
-        # vec = vec * torch.exp(log_norm)
-        # else:
-        #     print(f"Implicit mult by exp({-log_norm}) to keep normalization")
-
         # Since we only have a single vector, wrap it as a EdgeVec
         return EdgeVec(vec.squeeze(dummy_ind), is_left_vec=rmul)
 
@@ -294,7 +272,7 @@ class MatRegion(Contractable):
         Multiplies together all matrices and returns resultant SingleMat
 
         This method uses iterated batch multiplication to evaluate the full 
-        matrix product in depth log(num_mats)
+        matrix product in depth O( log(num_mats) )
         """
         mats = self.tensor
         shape = list(mats.shape)
@@ -309,6 +287,7 @@ class MatRegion(Contractable):
         
             even_mats = mats[:, 0:nice_size:2]
             odd_mats = mats[:, 1:nice_size:2]
+            # For odd sizes, set aside one batch of matrices for the next round
             leftover = mats[:, nice_size:]
 
             # Multiply together all pairs of matrices (except leftovers)

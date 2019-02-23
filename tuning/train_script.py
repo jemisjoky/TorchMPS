@@ -31,6 +31,11 @@ parser.add_argument('--periodic_bc', type=int, default=1, metavar='BC',
                     help='sets boundary conditions')
 parser.add_argument('--dynamic_mode', type=int, default=0, metavar='DM',
                     help='sets if our bond dimensions change dynamically')
+parser.add_argument('--threshold', type=int, default=2000, metavar='TH',
+                    help='sets how often we change our merge state')
+parser.add_argument('--cutoff', type=float, default=1e-10, metavar='CO',
+                    help='sets our SVD truncation')
+
 args = parser.parse_args()
 
 # MPS parameters
@@ -38,6 +43,8 @@ bond_dim = args.bond_dim
 dynamic_mode = bool(args.dynamic_mode)
 periodic_bc = bool(args.periodic_bc)
 init_std = args.init_std
+threshold = args.threshold
+cutoff = args.cutoff
 
 # Training parameters
 num_train = args.num_train
@@ -58,12 +65,15 @@ print("batch_size =", batch_size)
 print("num_epochs =", num_epochs)
 print("learning_rate =", lr)
 print("l2_reg =", l2_reg)
+print("threshold =", threshold)
+print("cutoff =", cutoff)
 print()
 sys.stdout.flush()
 
 # Initialize the MPS module
 mps = MPS(input_dim=28**2, output_dim=10, bond_dim=bond_dim, 
-          dynamic_mode=dynamic_mode, periodic_bc=periodic_bc)
+          dynamic_mode=dynamic_mode, periodic_bc=periodic_bc,
+          threshold=threshold)
 
 # Set loss function and optimizer
 loss_fun = torch.nn.CrossEntropyLoss()

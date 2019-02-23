@@ -5,17 +5,17 @@ from cores import MPS
 from torchvision import transforms, datasets
 
 # MPS parameters
-bond_dim = 30
-dynamic_mode = False
-periodic_bc = False
+bond_dim     = 15
+dynamic_mode = True
+periodic_bc  = False
 
 # Training parameters
-num_train = 50000
-num_test = 5000
+num_train  = 1000
+num_test   = 1000
 batch_size = 100
-num_epochs = 40
-lr = 1e-4
-l2_reg = 0.
+num_epochs = 10
+lr         = 1e-4
+l2_reg     = 0.
 
 # Initialize the MPS module
 mps = MPS(input_dim=28**2, output_dim=10, bond_dim=bond_dim, 
@@ -47,12 +47,13 @@ num_batches = {name: total_num // batch_size for (name, total_num) in
 
 print(f"Training on {num_train} MNIST images \n"
       f"(Testing on {num_test}) for {num_epochs} epochs")
-print(f"Maximum MPS bond dimension  = {bond_dim}")
+print(f"Maximum MPS bond dimension = {bond_dim}")
+print(f" * {'Dynamic' if dynamic_mode else 'Static'} bond dimensions")
+print(f" * {'Periodic' if periodic_bc else 'Open'} boundary conditions")
 print(f"Using Adam w/ learning rate = {lr:.1e}")
 if l2_reg > 0:
-    print(f"    and L2 regularization   = {l2_reg:.2e}")
-print(f"{'Periodic' if periodic_bc else 'Open'} boundary conditions")
-print(f"{'Dynamic' if dynamic_mode else 'Static'} training mode\n")
+    print(f"    and L2 regularization = {l2_reg:.2e}")
+print()
 
 # Let's start training!
 for epoch_num in range(1, num_epochs+1):
@@ -81,7 +82,7 @@ for epoch_num in range(1, num_epochs+1):
     print(f"### Epoch {epoch_num} ###")
     print(f"Average loss:           {running_loss / num_batches['train']:.3f}")
     print(f"Average train accuracy: {running_acc / num_batches['train']:.3f}")
-
+    
     # Evaluate accuracy of MPS classifier on the test set
     with torch.no_grad():
         running_acc = 0.

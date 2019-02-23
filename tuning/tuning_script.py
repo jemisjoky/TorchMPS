@@ -18,7 +18,7 @@ logs/+data.csv. This should allow for easy data visualization later on.
 
 # experiment_name will form part of our logfile name, so don't include any 
 # special characters or (ideally) spaces
-experiment_name = 'periodic_bc'
+experiment_name = 'dyn_periodic'
 experiment_name = experiment_name.upper()
 
 # The random parameters we want to search over
@@ -27,15 +27,18 @@ experiment_name = experiment_name.upper()
 #              'lr': ('lognormal', np.log(5e-4), np.log(1e2)),
 #              'periodic_bc': 0}
 # PERIODIC_BC
-variables = {'init_std': ('lognormal', np.log(1e0), np.log(1e5)),
-             'lr': ('lognormal', np.log(1e-4), np.log(1e2))}
-# BASE_RANDOM
-# variables = {'lr': ('lognormal', np.log(1e-4), np.log(1e2)),
-#              'init_std': ('lognormal', np.log(1e-15), np.log(1e6)),
-#              'periodic_bc': ('binomial', 1, 0.5),
-#              'dynamic_mode': 1}
-# variables = {'init_std': 2.19e-9,
-#              'lr': 2.04e-4}
+# variables = {'init_std': ('lognormal', np.log(1e0), np.log(1e5)),
+#              'lr': ('lognormal', np.log(1e-4), np.log(1e2))}
+# DYN_PERIODIC
+variables = {'init_std': ('lognormal', np.log(1e-5), np.log(1e5)),
+             'lr': ('lognormal', np.log(1e-4), np.log(1e2)),
+             'dynamic_mode': 1}
+# DYN_OPEN
+# variables = {'init_std': ('lognormal', np.log(1e-5), np.log(1e5)),
+#              'lr': ('lognormal', np.log(1e-4), np.log(1e2)),
+#              'periodic_bc': 0, 'dynamic_mode': 1}
+# variables = {'init_std': 1e-13,
+#              'lr': 2.82e-4}
 
 # Number of random parameter choices we want to search over
 num_trials = 40
@@ -63,14 +66,16 @@ defaults = {'lr': 1e-4,
             'num_epochs': 10,
             'num_test': 5000,
             'dynamic_mode': 0,
-            'periodic_bc': 1
+            'periodic_bc': 1,
+            'threshold': 2000,
+            'cutoff': 1e-10
             }
 
 # The parameters fed to our script, along with shorthand versions
-all_params = {'lr': 'lr', 'init_std': 'std', 'l2_reg': 'wd', 
-              'num_train': 'nt', 'batch_size': 'bs', 
-              'bond_dim': 'bd', 'num_epochs': 'ne', 'num_test': 'nte', 
-              'dynamic_mode': 'dm', 'periodic_bc': 'bc'}
+all_params = {'lr': 'lr', 'init_std': 'std', 'l2_reg': 'wd', 'num_train': 'nt',
+              'batch_size': 'bs', 'bond_dim': 'bd', 'num_epochs': 'ne', 
+              'num_test': 'nte', 'dynamic_mode': 'dm', 'periodic_bc': 'bc', 
+              'threshold': 'thr', 'cutoff': 'cut'}
 
 # Check to see if we've previously run this experiment
 with open(csv_file, 'r') as file:
