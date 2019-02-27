@@ -1,7 +1,8 @@
 import numpy as np
 import torch
 
-def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
+def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True,
+             sv_vec=None):
     """
     Split an input tensor into two pieces using a SVD across some partition
 
@@ -21,15 +22,19 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
                             to multiply both output tensors to give a (low rank 
                             approximation) of the input tensor
 
-        cutoff (float):     A truncation threshold for the singular values
+        cutoff (float):     A truncation threshold which eliminates any 
+                            singular values which are strictly less than cutoff
 
         max_D (int):        A maximum allowed value for the new bond. If max_D
-                            is specified, the returned 
+                            is specified, the returned tensors 
 
         sv_right (bool):    The SVD gives two orthogonal matrices and a matrix
                             of singular values. sv_right=True merges the SV 
                             matrix with the right output, while sv_right=False
                             merges it with the left output
+
+        sv_vec (Tensor):    Pytorch vector with length max_D, which is modified
+                            in place to return the vector of singular values
 
     Returns:
         left_tensor (Tensor),
@@ -37,9 +42,10 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
                                 left_str and right_str parts of svd_string
 
         bond_dim:               The dimension of the new bond appearing from
-                                the cutoff in our SVD. This generally won't 
-                                match the dimension of the output tensors at 
-                                this index when max_D is given
+                                the cutoff in our SVD. Note that this generally 
+                                won't match the dimension of left_/right_tensor
+                                at this mode, which is padded with zeros 
+                                whenever max_D is specified
     """
     def prod(int_list):
         output = 1
@@ -93,12 +99,22 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
             copy_right[:right_mat.size(0)] = right_mat
             svs, left_mat, right_mat = copy_svs, copy_left, copy_right
 
+        # If given as input, copy singular values into sv_vec
+        if sv_vec is not None and svs.shape == sv_vec.shape:
+            sv_vec[:] = svs
+        elif sv_vec is not None and svs.shape != sv_vec.shape:
+            raise TypeError(f"sv_vec.shape must be {list(svs.shape)}, but is "
+                            f"currently {list(sv_vec.shape)}")
+
         # Find the truncation point relative to our singular value cutoff
         truncation = 0
         for s in svs:
             if s < cutoff:
                 break
             truncation += 1
+        if truncation == 0:
+            raise RuntimeError("SVD cutoff too large, attempted to truncate "
+                               "tensor to bond dimension 0")
 
         # Perform the actual truncation
         if max_D:
@@ -112,7 +128,7 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
             left_mat = left_mat[:, :truncation]
             right_mat = right_mat[:truncation]
 
-        # Multiply the singular values into the appropriate matrix
+        # Merge the singular values into the appropriate matrix
         if sv_right:
             right_mat = torch.einsum('l,lr->lr', [svs, right_mat])
         else:
@@ -134,7 +150,7 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True):
 
 def init_tensor(shape, bond_str, init_method):
     """
-    Initialize a tensor of a given shape
+    Initialize a tensor with a given shape
 
     Args:
         shape:       The shape of our output parameter tensor
@@ -177,7 +193,7 @@ def init_tensor(shape, bond_str, init_method):
         tensor += std * torch.randn(shape)
 
     elif init_method == 'full_random':
-        tensor = torch.randn(shape)
+        tensor = std * torch.randn(shape)
 
     return tensor
 

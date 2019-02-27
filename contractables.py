@@ -10,15 +10,15 @@ class Contractable:
     through specific contraction routines in different subclasses
 
     Attributes:
-        tensor (Tensor):    A Pytorch tensor whose first index must be a batch
+        tensor (Tensor):    A Pytorch tensor whose first index is a batch
                             index. Sub-classes of Contractable may put other 
                             restrictions on tensor
-        bond_str (str):     A string whose letters each label a separate index 
-                            of our tensor, and whose length is required to
-                            equal the number of indices
+        bond_str (str):     A string whose letters each label a separate mode 
+                            of our tensor, and whose length equals the order 
+                            (number of modes) of our tensor
         global_bs (int):    The batch size associated with all Contractables.
-                            This is thus shared between all instances as a 
-                            class attribute
+                            This is shared between all Contractable instances 
+                            and allows for automatic expanding of tensors
     """
     # The global batch size
     global_bs = None

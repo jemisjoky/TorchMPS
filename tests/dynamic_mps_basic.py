@@ -3,7 +3,7 @@ import torch
 import sys
 
 sys.path.append('/home/jemis/torch_mps')
-from cores import MPS
+from modules import MPS
 
 batch_size = 11
 input_size = 21

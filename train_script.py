@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import time
 import torch
-from cores import MPS
+from modules import MPS
 from torchvision import transforms, datasets
 
 # MPS parameters
@@ -13,17 +13,18 @@ periodic_bc  = False
 num_train  = 1000
 num_test   = 1000
 batch_size = 100
-num_epochs = 10
-lr         = 1e-4
+num_epochs = 20
+learn_rate = 1e-4
 l2_reg     = 0.
 
 # Initialize the MPS module
 mps = MPS(input_dim=28**2, output_dim=10, bond_dim=bond_dim, 
-          dynamic_mode=dynamic_mode, periodic_bc=periodic_bc)
+          dynamic_mode=dynamic_mode, periodic_bc=periodic_bc, threshold=threshold)
 
 # Set loss function and optimizer
 loss_fun = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(mps.parameters(), lr=lr, weight_decay=l2_reg)
+optimizer = torch.optim.Adam(mps.parameters(), lr=learn_rate, 
+                             weight_decay=l2_reg)
 
 # Miscellaneous initialization
 torch.set_default_tensor_type('torch.FloatTensor')
@@ -50,7 +51,7 @@ print(f"Training on {num_train} MNIST images \n"
 print(f"Maximum MPS bond dimension = {bond_dim}")
 print(f" * {'Dynamic' if dynamic_mode else 'Static'} bond dimensions")
 print(f" * {'Periodic' if periodic_bc else 'Open'} boundary conditions")
-print(f"Using Adam w/ learning rate = {lr:.1e}")
+print(f"Using Adam w/ learning rate = {learn_rate:.1e}")
 if l2_reg > 0:
     print(f"    and L2 regularization = {l2_reg:.2e}")
 print()
