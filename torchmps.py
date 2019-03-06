@@ -10,8 +10,8 @@ class MPS(nn.Module):
     """
     def __init__(self, input_dim, output_dim, bond_dim, feature_dim=2, 
                  adaptive_mode=False, periodic_bc=False, parallel_eval=False, 
-                 label_site=None, cutoff=1e-10, merge_threshold=2000, 
-                 init_std=1e-9):
+                 label_site=None, path=None, cutoff=1e-10, 
+                 merge_threshold=2000, init_std=1e-9):
         super().__init__()
 
         if label_site is None:
@@ -43,20 +43,28 @@ class MPS(nn.Module):
                                  parallel_eval=parallel_eval)
         assert len(self.linear_region) == input_dim
 
+        if path:
+            assert isinstance(path, (list, torch.Tensor))
+            assert len(path) == input_dim
+
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.label_site = label_site
         self.bond_dim = bond_dim
         self.feature_dim = feature_dim
         self.periodic_bc = periodic_bc
         self.adaptive_mode = adaptive_mode
+        self.label_site = label_site
+        self.path = path
         self.cutoff = cutoff
         self.merge_threshold = merge_threshold
 
         # Initialize the list of bond dimensions, which starts out constant
-        self.bond_list = [bond_dim] * (input_dim + 2)
+        self.bond_list = bond_dim * torch.ones(input_dim + 2, dtype=torch.long)
         if not periodic_bc:
             self.bond_list[0], self.bond_list[-1] = 1, 1
+
+        # Initialize the list of singular values, which start out unset (-1)
+        self.sv_list = -1. * torch.ones([input_dim + 2, bond_dim])
 
     def embed_input(self, input_data):
         """
@@ -96,24 +104,37 @@ class MPS(nn.Module):
     def forward(self, input_data):
         """
         Embed our data and pass it to an MPS with a single output site
+
+        Args:
+            input_data (Tensor): Input with shape [batch_size, input_dim]. 
+                                 When using a user-specified path, the size of 
+                                 the second tensor mode need not exactly equal
+                                 input_dim
         """
-        # WHEN IMPLEMENTING CUSTOM ROUTING FOR MPS PATHS, THAT CODE GOES HERE
+        # For custom paths, rearrange our input into the desired order
+        if self.path:
+            path_inputs = []
+            for site_num in self.path:
+                path_inputs.append(input_data[:, site_num])
+            input_data = torch.stack(path_inputs, dim=1)
 
         # Embed our input data before feeding it into our linear region
         input_data = self.embed_input(input_data)
         output = self.linear_region(input_data)
 
-        # If we got a tuple as output, then use the first entry to update our
-        # bond dimensions
+        # If we got a tuple as output, then use the last two entries to 
+        # update our bond dimensions and singular values
         if isinstance(output, tuple):
-            new_bonds, output = output
+            output, new_bonds, new_svs = output
 
             assert len(new_bonds) == len(self.bond_list)
+            assert len(new_bonds) == len(new_svs)
             for i, bond_dim in enumerate(new_bonds):
                 if bond_dim != -1:
+                    assert new_svs[i] is not -1
                     self.bond_list[i] = bond_dim
+                    self.sv_list[i] = new_svs[i]
 
-        # return torch.abs(output)
         return output
 
 class LinearRegion(nn.Module):
@@ -259,7 +280,7 @@ class MergedLinearRegion(LinearRegion):
         """
         # If we've hit our threshold, flip the merge state of our tensors
         if self.input_counter >= self.merge_threshold:
-            bond_list = self.unmerge(cutoff=self.cutoff)
+            bond_list, sv_list = self.unmerge(cutoff=self.cutoff)
             self.offset = (self.offset + 1) % 2
             self.merge(offset=self.offset)
             self.input_counter -= self.merge_threshold
@@ -267,7 +288,7 @@ class MergedLinearRegion(LinearRegion):
             # Point self.module_list to the appropriate merged module
             self.module_list = getattr(self, f"module_list_{self.offset}")
         else:
-            bond_list = None
+            bond_list, sv_list = None, None
 
         # Increment our counter and call the LinearRegion's forward method
         self.input_counter += input_data.size(0)
@@ -275,7 +296,7 @@ class MergedLinearRegion(LinearRegion):
 
         # If we flipped our merge state, then return the bond_list and output
         if bond_list:
-            return (bond_list, output)
+            return output, bond_list, sv_list
         else:
             return output
 
@@ -370,19 +391,20 @@ class MergedLinearRegion(LinearRegion):
             merged_list = getattr(self, list_name)
 
             # Unmerge each core internally and add results to unmerged_list
-            bond_list = [-1]    # -1 indicates an unchanged bond dimension
-            unmerged_list = []
+            unmerged_list, bond_list, sv_list = [], [-1], [-1]
             for core in merged_list:
 
                 # Apply internal unmerging routine if our core supports it
                 if hasattr(core, 'unmerge'):
-                    new_bonds, new_core = core.unmerge(cutoff)
-                    unmerged_list.extend(new_core)
+                    new_cores, new_bonds, new_svs = core.unmerge(cutoff)
+                    unmerged_list.extend(new_cores)
                     bond_list.extend(new_bonds[1:])
+                    sv_list.extend(new_svs[1:])
                 else:
                     assert not isinstance(core, InputRegion)
                     unmerged_list.append(core)
                     bond_list.append(-1)
+                    sv_list.append(-1)
 
             # Combine all combinable pairs of cores. This occurs in several
             # passes, and for now acts nontrivially only on InputSite instances
@@ -430,7 +452,7 @@ class MergedLinearRegion(LinearRegion):
             # Add our unmerged module list as a new attribute and return
             # the updated bond dimensions
             self.module_list = nn.ModuleList(unmerged_list)
-            return bond_list
+            return bond_list, sv_list
 
     def combine(self, left_core, right_core, merging):
         """
@@ -660,16 +682,19 @@ class MergedInput(nn.Module):
         max_D = tensor.size(1)
 
         # Split every one of the cores into two and add them both to core_list
-        core_list, bond_list = [], [-1]
+        core_list, bond_list, sv_list = [], [-1], [-1]
         for merged_core in tensor:
+            sv_vec = torch.empty(max_D)
             left_core, right_core, bond_dim = svd_flex(merged_core, svd_string,
-                                                       max_D, cutoff)
+                                              max_D, cutoff, sv_vec=sv_vec)
+
             core_list += [left_core, right_core]
             bond_list += [bond_dim, -1]
+            sv_list += [sv_vec, -1]
 
         # Collate the split cores into one tensor and return as an InputRegion
         tensor = torch.stack(core_list)
-        return (bond_list, [InputRegion(tensor)])
+        return [InputRegion(tensor)], bond_list, sv_list
 
     def get_norm(self):
         """
@@ -848,28 +873,28 @@ class MergedOutput(nn.Module):
         the SVD cutoff, but will generally be padded with zeros to give the 
         new index a regular size.
         """
-
-
         bond_str = 'olri'
         tensor = self.tensor
         left_output = self.left_output
         if left_output:
             svd_string = 'olri->olu,uri'
             max_D = tensor.size(2)
+            sv_vec = torch.empty(max_D)
+
             output_core, input_core, bond_dim = svd_flex(tensor, svd_string, 
-                                                         max_D, cutoff)
-            
-            return ([-1, bond_dim, -1], 
-                    [OutputSite(output_core), InputSite(input_core)])
+                                                max_D, cutoff, sv_vec=sv_vec)
+            return ([OutputSite(output_core), InputSite(input_core)], 
+                    [-1, bond_dim, -1], [-1, sv_vec, -1])
 
         else:
             svd_string = 'olri->our,lui'
             max_D = tensor.size(1)
-            output_core, input_core, bond_dim = svd_flex(tensor, svd_string, 
-                                                         max_D, cutoff)
+            sv_vec = torch.empty(max_D)
 
-            return ([-1, bond_dim, -1], 
-                    [InputSite(input_core), OutputSite(output_core)])
+            output_core, input_core, bond_dim = svd_flex(tensor, svd_string, 
+                                                max_D, cutoff, sv_vec=sv_vec)
+            return ([InputSite(input_core), OutputSite(output_core)], 
+                    [-1, bond_dim, -1], [-1, sv_vec, -1])
 
     def get_norm(self):
         """

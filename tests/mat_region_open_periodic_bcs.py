@@ -4,7 +4,7 @@ import sys
 
 sys.path.append('/home/jemis/torch_mps')
 from contractables import *
-from modules import *
+from torchmps import *
 
 batch_size = 16
 size = 10

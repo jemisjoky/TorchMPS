@@ -1,0 +1,157 @@
+Training on 60000 MNIST images 
+(testing on 10000) for 30 epochs
+Maximum MPS bond dimension = 20
+ * Adaptive bond dimensions
+ * Open boundary conditions
+Using Adam w/ learning rate = 1.0e-04
+
+### Epoch 1 ###
+Average loss:           0.465
+Average train accuracy: 0.844
+Test accuracy:          0.951
+Runtime so far:         6748 sec
+
+### Epoch 2 ###
+Average loss:           0.133
+Average train accuracy: 0.960
+Test accuracy:          0.969
+Runtime so far:         13501 sec
+
+### Epoch 3 ###
+Average loss:           0.093
+Average train accuracy: 0.972
+Test accuracy:          0.971
+Runtime so far:         19252 sec
+
+### Epoch 4 ###
+Average loss:           0.072
+Average train accuracy: 0.977
+Test accuracy:          0.975
+Runtime so far:         43665 sec
+
+### Epoch 5 ###
+Average loss:           0.058
+Average train accuracy: 0.982
+Test accuracy:          0.977
+Runtime so far:         48275 sec
+
+### Epoch 6 ###
+Average loss:           0.051
+Average train accuracy: 0.984
+Test accuracy:          0.975
+Runtime so far:         53019 sec
+
+### Epoch 7 ###
+Average loss:           0.042
+Average train accuracy: 0.987
+Test accuracy:          0.979
+Runtime so far:         57872 sec
+
+### Epoch 8 ###
+Average loss:           0.035
+Average train accuracy: 0.989
+Test accuracy:          0.978
+Runtime so far:         62975 sec
+
+### Epoch 9 ###
+Average loss:           0.033
+Average train accuracy: 0.989
+Test accuracy:          0.980
+Runtime so far:         81547 sec
+
+### Epoch 10 ###
+Average loss:           0.030
+Average train accuracy: 0.990
+Test accuracy:          0.982
+Runtime so far:         89468 sec
+
+### Epoch 11 ###
+Average loss:           0.027
+Average train accuracy: 0.992
+Test accuracy:          0.982
+Runtime so far:         93474 sec
+
+### Epoch 12 ###
+Average loss:           0.025
+Average train accuracy: 0.993
+Test accuracy:          0.981
+Runtime so far:         96984 sec
+
+### Epoch 13 ###
+Average loss:           0.022
+Average train accuracy: 0.993
+Test accuracy:          0.984
+Runtime so far:         100183 sec
+
+### Epoch 14 ###
+Average loss:           0.023
+Average train accuracy: 0.993
+Test accuracy:          0.980
+Runtime so far:         104267 sec
+
+### Epoch 15 ###
+Average loss:           0.021
+Average train accuracy: 0.993
+Test accuracy:          0.979
+Runtime so far:         111057 sec
+
+### Epoch 16 ###
+Average loss:           0.019
+Average train accuracy: 0.994
+Test accuracy:          0.978
+Runtime so far:         114021 sec
+
+### Epoch 17 ###
+Average loss:           0.017
+Average train accuracy: 0.995
+Test accuracy:          0.980
+Runtime so far:         116988 sec
+
+### Epoch 18 ###
+Average loss:           0.016
+Average train accuracy: 0.995
+Test accuracy:          0.981
+Runtime so far:         120166 sec
+
+### Epoch 19 ###
+Average loss:           0.016
+Average train accuracy: 0.995
+Test accuracy:          0.978
+Runtime so far:         123430 sec
+
+### Epoch 20 ###
+Average loss:           0.015
+Average train accuracy: 0.996
+Test accuracy:          0.983
+Runtime so far:         126707 sec
+
+### Epoch 21 ###
+Average loss:           0.013
+Average train accuracy: 0.996
+Test accuracy:          0.983
+Runtime so far:         130059 sec
+
+### Epoch 22 ###
+Average loss:           0.013
+Average train accuracy: 0.996
+Test accuracy:          0.981
+Runtime so far:         133537 sec
+
+### Epoch 23 ###
+Average loss:           0.013
+Average train accuracy: 0.996
+Test accuracy:          0.985
+Runtime so far:         137084 sec
+
+### Epoch 24 ###
+Average loss:           0.011
+Average train accuracy: 0.997
+Test accuracy:          0.983
+Runtime so far:         140723 sec
+
+### Epoch 25 ###
+Average loss:           0.014
+Average train accuracy: 0.996
+Test accuracy:          0.982
+Runtime so far:         161446 sec
+

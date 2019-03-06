@@ -5,7 +5,7 @@ import torch
 import argparse
 from torchvision import transforms, datasets
 sys.path.append('/home/jemis/torch_mps')
-from modules import MPS
+from torchmps import MPS
 
 # Get parameters for testing
 parser = argparse.ArgumentParser(description='Hyperparameter tuning')

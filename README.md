@@ -36,12 +36,12 @@ available in PYTHONPATH. Torchvision is also used in our example script
 After cloning the repo, running `train_script.py` on the command
 line shows how our MPS can be used as a classifier for images from the MNIST dataset. 
 More generally, MPS models can be invoked by simply importing 
-the class `MPS` from `modules.py`, and then creating a new `MPS` instance. For 
+the class `MPS` from `torchmps.py`, and then creating a new `MPS` instance. For 
 example, an MPS which classifies 32x32 images into one of 10 categories can be 
 created and used as follows:
 
 ```
-from modules.py import MPS
+from torchmps.py import MPS
 
 my_mps = MPS(input_dim=32**2, output_dim=10, bond_dim=16)
 
@@ -69,6 +69,11 @@ The arguments given to MPS are:
    is performed serially or in parallel (_default = False (serial)_)
  * `label_site`: The location in the MPS chain where our output lives after
    contracting all other sites with inputs (_default = input_dim // 2_)
+ * `path`: A list specifying the path our MPS takes through the input data. For
+   example, `path = [0, 1, ..., input_dim-1]` gives the standard in-order 
+   traversal (used if `path = None`), while `path = [0, 2, ..., input_dim-1]`
+   defines an MPS which only acts on even-valued sites within our input 
+   (_default = None_)
  * `cutoff`: The singular value cutoff which controls adaptation of bond 
    dimensions (_default = 1e-9_)
  * `merge_threshold`: The number of inputs before our MPS dynamically shifts

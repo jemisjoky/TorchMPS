@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 import time
 import torch
-from modules import MPS
+from torchmps import MPS
 from torchvision import transforms, datasets
+
+# Miscellaneous initialization
+torch.manual_seed(0)
+start_time = time.time()
 
 # MPS parameters
 bond_dim      = 20
@@ -10,8 +14,8 @@ adaptive_mode = False
 periodic_bc   = False
 
 # Training parameters
-num_train  = 20000
-num_test   = 5000
+num_train  = 2000
+num_test   = 1000
 batch_size = 100
 num_epochs = 20
 learn_rate = 1e-4
@@ -25,11 +29,6 @@ mps = MPS(input_dim=28**2, output_dim=10, bond_dim=bond_dim,
 loss_fun = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(mps.parameters(), lr=learn_rate, 
                              weight_decay=l2_reg)
-
-# Miscellaneous initialization
-# torch.set_default_tensor_type('torch.FloatTensor')
-torch.manual_seed(0)
-start_time = time.time()
 
 # Get the training and test sets
 transform = transforms.ToTensor()
@@ -81,8 +80,8 @@ for epoch_num in range(1, num_epochs+1):
         optimizer.step()
 
     print(f"### Epoch {epoch_num} ###")
-    print(f"Average loss:           {running_loss / num_batches['train']:.3f}")
-    print(f"Average train accuracy: {running_acc / num_batches['train']:.3f}")
+    print(f"Average loss:           {running_loss / num_batches['train']:.4f}")
+    print(f"Average train accuracy: {running_acc / num_batches['train']:.4f}")
     
     # Evaluate accuracy of MPS classifier on the test set
     with torch.no_grad():
@@ -96,5 +95,5 @@ for epoch_num in range(1, num_epochs+1):
             _, preds = torch.max(scores, 1)
             running_acc += torch.sum(preds == labels).item() / batch_size
 
-    print(f"Test accuracy:          {running_acc / num_batches['test']:.3f}")
+    print(f"Test accuracy:          {running_acc / num_batches['test']:.4f}")
     print(f"Runtime so far:         {int(time.time()-start_time)} sec\n")
