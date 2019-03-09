@@ -1,0 +1,197 @@
+THIS TRIAL'S ALL PARAMETERS
+bond_dim = 1
+adaptive_mode = False
+periodic_bc = False
+init_std = 1e-09
+num_train = 60000
+num_test = 10000
+batch_size = 100
+num_epochs = 30
+learning_rate = 0.0001
+l2_reg = 0.0
+merge_threshold = 2000
+cutoff = 1e-10
+Using device: cuda:0
+
+path = None
+
+### Epoch 1 ###
+Average loss for epoch: 2.1136
+Average train accuracy: 0.1122
+Test accuracy:          0.1135
+Runtime so far:         45 sec
+
+### Epoch 2 ###
+Average loss for epoch: 2.0145
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         78 sec
+
+### Epoch 3 ###
+Average loss for epoch: 1.9888
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         110 sec
+
+### Epoch 4 ###
+Average loss for epoch: 1.9751
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         143 sec
+
+### Epoch 5 ###
+Average loss for epoch: 1.9676
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         176 sec
+
+### Epoch 6 ###
+Average loss for epoch: 1.9615
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         208 sec
+
+### Epoch 7 ###
+Average loss for epoch: 1.9579
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         241 sec
+
+### Epoch 8 ###
+Average loss for epoch: 1.9552
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         274 sec
+
+### Epoch 9 ###
+Average loss for epoch: 1.9529
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         307 sec
+
+### Epoch 10 ###
+Average loss for epoch: 1.9512
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         340 sec
+
+### Epoch 11 ###
+Average loss for epoch: 1.9486
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         372 sec
+
+### Epoch 12 ###
+Average loss for epoch: 1.9474
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         405 sec
+
+### Epoch 13 ###
+Average loss for epoch: 1.9460
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         438 sec
+
+### Epoch 14 ###
+Average loss for epoch: 1.9446
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         470 sec
+
+### Epoch 15 ###
+Average loss for epoch: 1.9445
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         503 sec
+
+### Epoch 16 ###
+Average loss for epoch: 1.9431
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         536 sec
+
+### Epoch 17 ###
+Average loss for epoch: 1.9423
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         569 sec
+
+### Epoch 18 ###
+Average loss for epoch: 1.9417
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         601 sec
+
+### Epoch 19 ###
+Average loss for epoch: 1.9412
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         634 sec
+
+### Epoch 20 ###
+Average loss for epoch: 1.9400
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         667 sec
+
+### Epoch 21 ###
+Average loss for epoch: 1.9392
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         700 sec
+
+### Epoch 22 ###
+Average loss for epoch: 1.9386
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         732 sec
+
+### Epoch 23 ###
+Average loss for epoch: 1.9379
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         765 sec
+
+### Epoch 24 ###
+Average loss for epoch: 1.9375
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         798 sec
+
+### Epoch 25 ###
+Average loss for epoch: 1.9372
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         830 sec
+
+### Epoch 26 ###
+Average loss for epoch: 1.9370
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         863 sec
+
+### Epoch 27 ###
+Average loss for epoch: 1.9357
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         896 sec
+
+### Epoch 28 ###
+Average loss for epoch: 1.9356
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         929 sec
+
+### Epoch 29 ###
+Average loss for epoch: 1.9352
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         961 sec
+
+### Epoch 30 ###
+Average loss for epoch: 1.9351
+Average train accuracy: 0.1124
+Test accuracy:          0.1135
+Runtime so far:         994 sec
+
