@@ -175,19 +175,34 @@ def init_tensor(shape, bond_str, init_method):
     assert len(shape) == len(bond_str)
     assert len(set(bond_str)) == len(bond_str)
 
-    if init_method not in ["random_eye", "full_random"]:
+    if init_method not in ['random_eye', 'half_random_eye', 'full_random']:
         raise ValueError(f"Unknown initialization method: {init_method}")
 
-    if init_method == 'random_eye':
+    if init_method in ['random_eye', 'half_random_eye']:
         bond_chars = ['l', 'r']
         assert all([c in bond_str for c in bond_chars])
 
-        # Initialize our tensor as an expanded identity matrix 
-        eye_shape = [shape[i] if c in bond_chars else 1
-                     for i, c in enumerate(bond_str)]
-        bond_dims = [shape[bond_str.index(c)] for c in bond_chars]
-        tensor = torch.eye(bond_dims[0], bond_dims[1]).view(eye_shape)
-        tensor = tensor.expand(shape)
+        # Initialize our tensor slices as identity matrices which each fill
+        # either all or half of the initially allocated bond space 
+        if init_method == 'half_random_eye':
+            eye_shape = [shape[i] // 2 if c in bond_chars else 1
+                         for i, c in enumerate(bond_str)]
+            expand_shape = [shape[i] // 2 if c in bond_chars else shape[i]
+                            for i, c in enumerate(bond_str)]
+            bond_dims = [shape[bond_str.index(c)] // 2 for c in bond_chars]
+        
+        elif init_method == 'random_eye':
+            eye_shape = [shape[i] if c in bond_chars else 1
+                         for i, c in enumerate(bond_str)]
+            expand_shape = [shape[i] if c in bond_chars else shape[i]
+                            for i, c in enumerate(bond_str)]
+            bond_dims = [shape[bond_str.index(c)] for c in bond_chars]
+
+        eye_tensor = torch.eye(bond_dims[0], bond_dims[1]).view(eye_shape)
+        eye_tensor = eye_tensor.expand(expand_shape)
+
+        tensor = torch.zeros(shape)
+        tensor[[slice(dim) for dim in expand_shape]] = eye_tensor
 
         # Add on a bit of random noise
         tensor += std * torch.randn(shape)

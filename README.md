@@ -58,7 +58,8 @@ The arguments given to MPS are:
  * `output_dim`: The dimension of the output we get from each input
  * `bond_dim`: The internal bond dimension, a hyperparameter that sets the
    expressivity of our MPS. When in adaptive training mode, `bond_dim`
-   instead specifies the **maximum** possible bond dimension.
+   instead specifies the **maximum** possible bond dimension, with the initial
+   bond dimension set to half of `bond_dim`
  * `feature_dim`: The dimension of the local feature spaces we embed each datum
    in (_default = 2_)
  * `adaptive_mode`: Whether our MPS is trained with its bond dimensions chosen

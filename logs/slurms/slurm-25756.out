@@ -1,0 +1,25 @@
+Done with experiment 1
+Done with experiment 2
+Done with experiment 3
+Done with experiment 4
+Traceback (most recent call last):
+  File "train_script.py", line 160, in <module>
+    scores = mps(inputs)
+  File "/network/home/millerja/miniconda3/lib/python3.6/site-packages/torch/nn/modules/module.py", line 489, in __call__
+    result = self.forward(*input, **kwargs)
+  File "/network/home/millerja/torchmps/torchmps.py", line 123, in forward
+    output = self.linear_region(input_data)
+  File "/network/home/millerja/miniconda3/lib/python3.6/site-packages/torch/nn/modules/module.py", line 489, in __call__
+    result = self.forward(*input, **kwargs)
+  File "/network/home/millerja/torchmps/torchmps.py", line 193, in forward
+    contractable = contractable_list.reduce(parallel_eval=True)
+  File "/network/home/millerja/torchmps/contractables.py", line 206, in reduce
+    c_list = [item.reduce() for item in c_list]
+  File "/network/home/millerja/torchmps/contractables.py", line 206, in <listcomp>
+    c_list = [item.reduce() for item in c_list]
+  File "/network/home/millerja/torchmps/contractables.py", line 295, in reduce
+    mats = torch.cat([mats, leftover], 1)
+RuntimeError: CUDA out of memory. Tried to allocate 747.75 MiB (GPU 0; 11.91 GiB total capacity; 8.47 GiB already allocated; 107.06 MiB free; 2.93 GiB cached)
+srun: error: leto25: task 0: Exited with exit code 1
+Done with experiment 5
+Done with all experiments

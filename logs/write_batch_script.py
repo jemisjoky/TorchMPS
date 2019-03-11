@@ -11,15 +11,22 @@ print()
 
 ### SPECIFY YOUR EXPERIMENT HERE ###
 
-# experiment_name will form part of our logfile name, so don't include any 
+# experiment_name will form part of our logfile name, so don't include any
 # special characters or (ideally) spaces
+experiment_name = 'random_path'
+=======
 experiment_name = 'adaptive'
+>>>>>>> Fixed issue with initialization during adaptive training
 experiment_name = experiment_name.upper()
 
 # The parameters we want to search over
 num_trials = 6
 variables = {'bond_dim': [10, 20, 40, 60, 80, 100],
+             'periodic_bc': 1,
+             'random_path': 1}
+=======
              'adaptive_mode': 1}
+>>>>>>> Fixed issue with initialization during adaptive training
 
 ### FILE INFORMATION ###
 
@@ -50,8 +57,8 @@ defaults = {'lr': 1e-4,
 
 # The parameters fed to our script, along with shorthand versions
 all_params = {'lr': 'lr', 'init_std': 'std', 'l2_reg': 'wd', 'num_train': 'nt',
-              'batch_size': 'bs', 'bond_dim': 'bd', 'num_epochs': 'ne', 
-              'num_test': 'nte', 'adaptive_mode': 'dm', 'periodic_bc': 'bc', 
+              'batch_size': 'bs', 'bond_dim': 'bd', 'num_epochs': 'ne',
+              'num_test': 'nte', 'adaptive_mode': 'dm', 'periodic_bc': 'bc',
               'merge_threshold': 'thr', 'cutoff': 'cut', 'use_gpu': 'gpu',
               'random_path': 'path'}
 
@@ -111,7 +118,7 @@ while exp_count < num_trials:
     print(call_str)
     print(f'echo "Done with experiment {exp_count+1}"')
     print()
-    
+
     exp_count += 1
 
 # print("wait")

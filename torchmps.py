@@ -23,13 +23,14 @@ class MPS(nn.Module):
         module_list = []
         if label_site > 0:
             module_list.append(InputRegion(None, label_site, bond_dim, 
-                                           feature_dim))
+                               feature_dim, half_init=adaptive_mode))
 
-        module_list.append(OutputSite(None, output_dim, bond_dim))
+        module_list.append(OutputSite(None, output_dim, bond_dim, 
+                                      half_init=adaptive_mode))
 
         if label_site < input_dim:
-            module_list.append(InputRegion(None, 
-                               input_dim - label_site, bond_dim, feature_dim))
+            module_list.append(InputRegion(None, input_dim-label_site, 
+                               bond_dim, feature_dim, half_init=adaptive_mode))
 
         # Initialize linear_region according to our adaptive_mode specification
         if adaptive_mode:
@@ -517,14 +518,16 @@ class InputRegion(nn.Module):
     Contiguous region of MPS cores which takes in a collection of input data
     """
     def __init__(self, tensor=None, input_dim=None, bond_dim=None, 
-                 feature_dim=None, init_std=1e-9):
+                 feature_dim=None, init_std=1e-9, half_init=False):
         super().__init__()
         bond_str = 'slri'
 
         # If it isn't given, initialize our site-indexed core tensor
         if tensor is None:
             shape = [input_dim, bond_dim, bond_dim, feature_dim]
-            tensor = init_tensor(shape, bond_str, ('random_eye', init_std))
+            init_method = ('half_random_eye' if half_init else 'random_eye', 
+                            init_std)
+            tensor = init_tensor(shape, bond_str, init_method)
 
         # Register our tensor as a Pytorch Parameter
         self.tensor = nn.Parameter(tensor.contiguous())
@@ -785,14 +788,16 @@ class OutputSite(nn.Module):
     A single MPS core with no input and a single output index
     """
     def __init__(self, tensor, output_dim=None, D_l=None, D_r=None, 
-                 init_std=1e-9):
+                 init_std=1e-9, half_init=False):
         super().__init__()
         bond_str = 'olr'
 
         # If it isn't given, initialize our core tensor
         if tensor is None:
             shape = [output_dim, D_l, (D_r if D_r else D_l)]
-            tensor = init_tensor(shape, bond_str, ('random_eye', init_std))
+            init_method = ('half_random_eye' if half_init else 'random_eye', 
+                            init_std)
+            tensor = init_tensor(shape, bond_str, init_method)
 
         # Register our tensor as a Pytorch Parameter
         self.tensor = nn.Parameter(tensor.contiguous())
