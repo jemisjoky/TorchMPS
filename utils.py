@@ -12,24 +12,24 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True,
         svd_string (str):   String of the form 'init_str->left_str,right_str',
                             where init_str describes the indices of tensor, and
                             left_str/right_str describe those of the left and
-                            right output tensors. The characters of left_str 
+                            right output tensors. The characters of left_str
                             and right_str form a partition of the characters in
                             init_str, but each contain one additional character
                             representing the new bond which comes from the SVD
 
                             Reversing the terms in svd_string to the left and
                             right of '->' gives an ein_string which can be used
-                            to multiply both output tensors to give a (low rank 
+                            to multiply both output tensors to give a (low rank
                             approximation) of the input tensor
 
-        cutoff (float):     A truncation threshold which eliminates any 
+        cutoff (float):     A truncation threshold which eliminates any
                             singular values which are strictly less than cutoff
 
         max_D (int):        A maximum allowed value for the new bond. If max_D
-                            is specified, the returned tensors 
+                            is specified, the returned tensors
 
         sv_right (bool):    The SVD gives two orthogonal matrices and a matrix
-                            of singular values. sv_right=True merges the SV 
+                            of singular values. sv_right=True merges the SV
                             matrix with the right output, while sv_right=False
                             merges it with the left output
 
@@ -42,9 +42,9 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True,
                                 left_str and right_str parts of svd_string
 
         bond_dim:               The dimension of the new bond appearing from
-                                the cutoff in our SVD. Note that this generally 
+                                the cutoff in our SVD. Note that this generally
                                 won't match the dimension of left_/right_tensor
-                                at this mode, which is padded with zeros 
+                                at this mode, which is padded with zeros
                                 whenever max_D is specified
     """
     def prod(int_list):
@@ -73,7 +73,7 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True,
         # Permute our tensor into something that can be viewed as a matrix
         ein_str = f"{init_str}->{left_part+right_part}"
         tensor = torch.einsum(ein_str, [tensor]).contiguous()
-        
+
         left_shape = list(tensor.shape[:len(left_part)])
         right_shape = list(tensor.shape[len(left_part):])
         left_dim, right_dim = prod(left_shape), prod(right_shape)
@@ -140,10 +140,10 @@ def svd_flex(tensor, svd_string, max_D=None, cutoff=1e-10, sv_right=True,
 
         # Finally, permute the indices into the desired order
         if left_str != left_part + bond_char:
-            left_tensor = torch.einsum(f"{left_part+bond_char}->{left_str}", 
+            left_tensor = torch.einsum(f"{left_part+bond_char}->{left_str}",
                                     [left_tensor])
         if right_str != bond_char + right_part:
-            right_tensor = torch.einsum(f"{bond_char+right_part}->{right_str}", 
+            right_tensor = torch.einsum(f"{bond_char+right_part}->{right_str}",
                                     [right_tensor])
 
         return left_tensor, right_tensor, truncation
@@ -163,10 +163,13 @@ def init_tensor(shape, bond_str, init_method):
                      entry is an initialization method and whose second entry
                      is a scale/standard deviation parameter
     """
-    # Unpack init_method if needed
+    # Unpack init_method if it is a tuple
     if not isinstance(init_method, str):
         init_str = init_method[0]
         std = init_method[1]
+        if init_str == 'min_random_eye':
+            init_dim = init_method[2]
+
         init_method = init_str
     else:
         std = 1e-6
@@ -175,27 +178,30 @@ def init_tensor(shape, bond_str, init_method):
     assert len(shape) == len(bond_str)
     assert len(set(bond_str)) == len(bond_str)
 
-    if init_method not in ['random_eye', 'half_random_eye', 'full_random']:
+    if init_method not in ['random_eye', 'min_random_eye', 'full_random']:
         raise ValueError(f"Unknown initialization method: {init_method}")
 
-    if init_method in ['random_eye', 'half_random_eye']:
+    if init_method in ['random_eye', 'min_random_eye']:
         bond_chars = ['l', 'r']
         assert all([c in bond_str for c in bond_chars])
 
         # Initialize our tensor slices as identity matrices which each fill
-        # either all or half of the initially allocated bond space 
-        if init_method == 'half_random_eye':
-            eye_shape = [shape[i] // 2 if c in bond_chars else 1
+        # either all or some of the initially allocated bond space
+        if init_method == 'min_random_eye':
+            # If our tensors are big enough, bond dimensions begin at init_dim
+            bond_dims = [shape[bond_str.index(c)] for c in bond_chars]
+            if all([full_dim >= init_dim for full_dim in bond_dims]):
+                bond_dims = [init_dim, init_dim]
+
+            eye_shape = [init_dim if c in bond_chars else 1
                          for i, c in enumerate(bond_str)]
-            expand_shape = [shape[i] // 2 if c in bond_chars else shape[i]
+            expand_shape = [init_dim if c in bond_chars else shape[i]
                             for i, c in enumerate(bond_str)]
-            bond_dims = [shape[bond_str.index(c)] // 2 for c in bond_chars]
-        
+
         elif init_method == 'random_eye':
             eye_shape = [shape[i] if c in bond_chars else 1
                          for i, c in enumerate(bond_str)]
-            expand_shape = [shape[i] if c in bond_chars else shape[i]
-                            for i, c in enumerate(bond_str)]
+            expand_shape = shape
             bond_dims = [shape[bond_str.index(c)] for c in bond_chars]
 
         eye_tensor = torch.eye(bond_dims[0], bond_dims[1]).view(eye_shape)
@@ -217,14 +223,14 @@ def init_tensor(shape, bond_str, init_method):
 
 def load_HV_data(length):
     """
-    Output a toy "horizontal/vertical" data set of black and white 
-    images with size length x length. Each image contains a single 
+    Output a toy "horizontal/vertical" data set of black and white
+    images with size length x length. Each image contains a single
     horizontal or vertical stripe, set against a background
     of the opposite color. The labels associated with these images
     are either 0 (horizontal stripe) or 1 (vertical stripe).
 
     In its current version, this returns two data sets, a training
-    set with 75% of the images and a test set with 25% of the 
+    set with 75% of the images and a test set with 25% of the
     images.
     """
     num_images = 4 * (2**(length-1) - 1)
@@ -250,7 +256,7 @@ def load_HV_data(length):
             images[2*i-2, j, :] = val
             # Vertical stripe pattern
             images[2*i-1, :, j] = val
-        
+
         labels[2*i-2] = 0
         labels[2*i-1] = 1
 
