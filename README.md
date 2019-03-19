@@ -2,7 +2,7 @@
 
 TorchMPS is a framework for working with matrix product state (aka MPS,
 aka tensor train) models within Pytorch. Our MPS models are written
-as Pytorch Modules, and so can simply be viewed as differentiable black
+as Pytorch Modules, and can simply be viewed as differentiable black
 boxes that are interchangeable with standard neural network layers. However,
 the rich structure of MPS's allows for more interesting behavior, such as:
 
@@ -19,8 +19,8 @@ the rich structure of MPS's allows for more interesting behavior, such as:
 
 The function computed by our MPS Module comes from embedding
 input data in a high-dimensional feature space before contracting it with an
-MPS living in this space, as first described in [Novikov, Trofimov, and Oseledets 2016]
-and [Stoudenmire and Schwab 2016]. For scalar outputs, this contraction step is
+MPS in the same space, as described in [Novikov, Trofimov, and Oseledets 2016][NTO]
+and [Stoudenmire and Schwab 2016][S&S]. For scalar outputs, this contraction step is
 formally identical to linear regression, but the (exponentially) large feature space and
 MPS-parameterized weight vector makes the overall function significantly more
 expressive. In general, the output is associated with a single site of the MPS,
@@ -33,13 +33,12 @@ As our models are built on Pytorch, users will need to have this installed and
 available in PYTHONPATH. Torchvision is also used in our example script
 `train_script.py`, but not anywhere else.
 
-After cloning the repo, running `train_script.py` on the command
-line shows how our MPS can be used as a classifier for images from the MNIST dataset.
-More generally, MPS models can be invoked by simply importing
+After cloning the repo, running `train_script.py` gives a simple example of how
+our MPS can be used to classify MNIST digits.
+In general, MPS models can be invoked by simply importing
 the class `MPS` from `torchmps.py`, and then creating a new `MPS` instance. For
 example, an MPS which classifies 32x32 images into one of 10 categories can be
-created and used as follows:
-
+defined and used as follows:
 ```
 from torchmps.py import MPS
 
@@ -49,11 +48,11 @@ my_mps = MPS(input_dim=32**2, output_dim=10, bond_dim=16)
 
 batch_scores = my_mps(batch_images)
 ```
+That's it! After creation, `my_mps` acts as a stateful function whose internal
+parameters can be trained exactly as any other Pytorch Module (e.g. nn.Linear,
+nn.Conv1d, nn.Sequential, etc).
 
-That's all! After creation, `my_mps` acts as a stateful function whose internal
-parameters can be trained exactly as any other Pytorch Module (e.g. nn.Linear, nn.Conv1d, nn.Sequential, etc).
-
-The arguments given to MPS are:
+The possible arguments for defining an MPS are:
 
  * `input_dim`: The dimension of the input we feed to our MPS
  * `output_dim`: The dimension of the output we get from each input
@@ -92,12 +91,24 @@ will be applied to all input data given to `my_mps`.
 
 ## Similar Software
 
-[NEED TO EXPAND MORE HERE]
+There are plenty of excellent software packages for manipulating matrix product
+states/tensor trains, some previous ones including the following:
 
-    * T3F (written using TensorFlow)
-    * TNML (written using ITensor)
-    * tntorch (written using Pytorch)
-    * scikit_tt (written in Python)
+ * T3F (Python, TensorFlow): Useful for general tensor train applications,
+   T3F includes lots of support for working with tensor train
+  factorizations of matrices (as used in [Novikov et al. 2015][Nov]), in
+  addition to Riemannian optimization techniques for improved training.
+  * TNML (C++, ITensor): Implements the DMRG-style training described
+  in [Stoudenmire and Schwab 2016][S&S], which had a major influence on our
+  adaptive training algorithm.
+  * tntorch (Python, Pytorch): Implements many different tensor factorizations,
+  including CP, Tucker, and tensor train.
+
+A defining quality of our library is the emphasis on using matrix product states
+as functional modules which can be easily interchanged with existing neural network
+components, while still allowing for MPS-specific features like adaptive
+training methods and nontrivial geometrical layouts.
 
 [S&S]: https://arxiv.org/abs/1605.05775
 [NTO]: https://arxiv.org/abs/1605.03795
+[Nov]: https://arxiv.org/abs/1509.06569
