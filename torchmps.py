@@ -21,18 +21,10 @@ class MPS(nn.Module):
         # Our MPS is made of two InputRegions separated by an OutputSite.
         module_list = []
         if label_site > 0:
-            module_list.append(InputRegion(None, label_site, bond_dim,
-                               feature_dim, half_init=adaptive_mode))
-
-        module_list.append(OutputSite(None, output_dim, bond_dim,
-                                      half_init=adaptive_mode))
-
-        # The first input region
-        if label_site > 0:
             tensor = init_tensor(bond_str='slri',
-                shape=[label_site, bond_dim, bond_dim, feature_dim],
-                init_method=('min_random_eye' if adaptive_mode else
-                             'random_eye', init_std, output_dim))
+            shape=[label_site, bond_dim, bond_dim, feature_dim],
+            init_method=('min_random_eye' if adaptive_mode else
+            'random_eye', init_std, output_dim))
             module_list.append(InputRegion(tensor))
 
         # The output site
@@ -43,8 +35,11 @@ class MPS(nn.Module):
 
         # The other input region
         if label_site < input_dim:
-            module_list.append(InputRegion(None, input_dim-label_site,
-                               bond_dim, feature_dim, half_init=adaptive_mode))
+            tensor = init_tensor(bond_str='slri',
+                shape=[input_dim-label_site, bond_dim, bond_dim, feature_dim],
+                init_method=('min_random_eye' if adaptive_mode else
+                             'random_eye', init_std, output_dim))
+            module_list.append(InputRegion(tensor))
 
         # Initialize linear_region according to our adaptive_mode specification
         if adaptive_mode:
