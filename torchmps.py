@@ -1,8 +1,52 @@
+"""
+TODO:
+
+    (1) Create FixedVector and FixedOutput classes, which are "functional" in the sense of having no trainable parameters. FixedVector is all ones, and FixedOutput is either diagonal (output_dim <= bond_dim), or some type of isometric embedding of the vectors (output_dim > bond_dim)
+    [NOTE: I think this is an "isometric tight frame", whose explicit construction is given in https://www.semanticscholar.org/paper/ISOMETRIC-TIGHT-FRAMES-Reams-Waldron/9199c3eb5bfe93b19d17d92c0a9f2cacbe02a9ad]
+
+    (2) Revisit my earlier idea for refactoring my code to get rid of all these nuisance classes.
+"""
+
+
 import torch
 import torch.nn as nn
 from utils import init_tensor, svd_flex
 from contractables import SingleMat, MatRegion, OutputCore, ContractableList, \
                           EdgeVec
+
+class TI_MPS(nn.Module):
+    """
+    Sequence MPS which converts input of arbitrary length to a single output vector
+    """
+    def __init__(self, feature_dim, output_dim, bond_dim):
+        super().__init__()
+        pass
+
+        # INITIALIZE SINGLE CORE TENSOR NEAR IDENTITY
+        # SAVE FIXED_VECTOR AND FIXED_OUTPUT AS (FUNCTIONAL) ATTRIBUTES
+
+    def forward(self, input_data):
+        """
+        Takes batch tensor or list of inputs and return a batch tensor or list of outputs
+
+        Args:
+            input_data: Either a tensor of shape [batch_size, length, feature_dim], 
+            or a list of length batch_size, whose i'th item is a matrix of shape 
+            [length_i, feature_dim].
+        """
+        pass
+
+        # REPRESENT INPUT AS LIST OF BATCH TENSORS, WHERE EITHER THE LIST LENGTH OR THE BATCH DIMENSION IS 1
+        
+        # LOOP OVER BATCH TENSORS IN LIST, EACH TIME CONTRACTING INPUT TO GET MAT_REGION
+
+            # WRAP MAT_REGION AS CONTRACTABLE_LIST WITH INITIAL VECTOR, OUTPUT CORE
+            # EVALUATE CONTRACTABLE_LIST
+            # APPEND TO OUTPUT LIST
+
+        # STACK OUTPUT LIST TO GET MATRIX OF BATCH OUTPUTS
+
+
 
 class MPS(nn.Module):
     """
@@ -76,6 +120,43 @@ class MPS(nn.Module):
 
         # Initialize the list of singular values, which start out unset (-1)
         self.sv_list = -1. * torch.ones([input_dim + 2, bond_dim])
+
+    def forward(self, input_data):
+        """
+        Embed our data and pass it to an MPS with a single output site
+
+        Args:
+            input_data (Tensor): Input with shape [batch_size, input_dim].
+                                 When using a user-specified path, the size of
+                                 the second tensor mode need not exactly equal
+                                 input_dim, since the path variable is used to
+                                 slice a certain subregion of input_data
+        """
+        # For custom paths, rearrange our input into the desired order
+        if self.path:
+            path_inputs = []
+            for site_num in self.path:
+                path_inputs.append(input_data[:, site_num])
+            input_data = torch.stack(path_inputs, dim=1)
+
+        # Embed our input data before feeding it into our linear region
+        input_data = self.embed_input(input_data)
+        output = self.linear_region(input_data)
+
+        # If we got a tuple as output, then use the last two entries to
+        # update our bond dimensions and singular values
+        if isinstance(output, tuple):
+            output, new_bonds, new_svs = output
+
+            assert len(new_bonds) == len(self.bond_list)
+            assert len(new_bonds) == len(new_svs)
+            for i, bond_dim in enumerate(new_bonds):
+                if bond_dim != -1:
+                    assert new_svs[i] is not -1
+                    self.bond_list[i] = bond_dim
+                    self.sv_list[i] = new_svs[i]
+
+        return output
 
     def embed_input(self, input_data):
         """
@@ -161,42 +242,6 @@ class MPS(nn.Module):
         """
         return self.input_dim
 
-    def forward(self, input_data):
-        """
-        Embed our data and pass it to an MPS with a single output site
-
-        Args:
-            input_data (Tensor): Input with shape [batch_size, input_dim].
-                                 When using a user-specified path, the size of
-                                 the second tensor mode need not exactly equal
-                                 input_dim, since the path variable is used to
-                                 slice a certain subregion of input_data
-        """
-        # For custom paths, rearrange our input into the desired order
-        if self.path:
-            path_inputs = []
-            for site_num in self.path:
-                path_inputs.append(input_data[:, site_num])
-            input_data = torch.stack(path_inputs, dim=1)
-
-        # Embed our input data before feeding it into our linear region
-        input_data = self.embed_input(input_data)
-        output = self.linear_region(input_data)
-
-        # If we got a tuple as output, then use the last two entries to
-        # update our bond dimensions and singular values
-        if isinstance(output, tuple):
-            output, new_bonds, new_svs = output
-
-            assert len(new_bonds) == len(self.bond_list)
-            assert len(new_bonds) == len(new_svs)
-            for i, bond_dim in enumerate(new_bonds):
-                if bond_dim != -1:
-                    assert new_svs[i] is not -1
-                    self.bond_list[i] = bond_dim
-                    self.sv_list[i] = new_svs[i]
-
-        return output
 
 class LinearRegion(nn.Module):
     """
