@@ -482,6 +482,7 @@ class MergedLinearRegion(LinearRegion):
                     if new_core is None:
                         combined_list.append(left_core)
                         mod_num += 1
+
                     # If we get something new, move to the next distinct pair
                     else:
                         combined_list.append(new_core)
@@ -523,6 +524,7 @@ class MergedLinearRegion(LinearRegion):
         we're currently merging (merging=True) or unmerging (merging=False),
         either return a new core, or None if no rule exists for this context
         """
+
         # Combine an OutputSite with a stray InputSite, return a MergedOutput
         if merging and ((isinstance(left_core, OutputSite) and
                          isinstance(right_core, InputSite)) or
