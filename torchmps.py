@@ -120,6 +120,7 @@ class MPS(nn.Module):
                 raise RuntimeError(f"self.feature_dim = {self.feature_dim}, "
                       "but default feature_map requires self.feature_dim = 2")
             embedded_data = torch.empty(embedded_shape)
+            print(embedded_data.shape, 'hi')
 
             embedded_data[:,:,0] = input_data
             embedded_data[:,:,1] = 1 - input_data

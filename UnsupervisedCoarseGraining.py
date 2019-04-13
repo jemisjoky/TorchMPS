@@ -42,7 +42,7 @@ def local_feature_vectors(vector):
     N = vector.shape[1]
     phi = torch.ones(2, N)
     phi[1,:] = vector
-    return phi
+    return torch.transpose(phi, 0, 1)
 
 def custom_feature(data_loader):
     """ For each image: 
@@ -50,22 +50,23 @@ def custom_feature(data_loader):
     
     #dimensions of feature tensor Phi
     dim1 = len(data_loader) #number of images
-    dim2 = 2 
+    
     #get height and width of an image
     for batch_idx, (x, target) in enumerate(data_loader):
         [h,w] = x[0,0,:,:].shape
-        if batch_idx == 0:
-            break 
-    dim3 = h*w
+        break 
+    
+    dim2 = h*w
+    dim3 = 2 
     
     Phi = torch.zeros(dim1, dim2, dim3)
     
-    i = 0
     for batch_idx, (x, target) in enumerate(data_loader):
         image = x[0,0,:,:]
-        image.resize_(1, dim3) #vectorize the image
-        Phi[i,:,:] = local_feature_vectors(image)
-        i = i+1
+        image.resize_(1, dim2) #vectorize the image
+        image = local_feature_vectors(image)
+        Phi[batch_idx, :, :] = image
+
     return Phi
 
 def reduced_covariance(Phi, s1, s2):
@@ -73,32 +74,36 @@ def reduced_covariance(Phi, s1, s2):
         Example: to compute the reduced covariance matrix ro34, s1=2 and s2=3"""
 
     Nt = Phi.shape[0]      #number of images
-    N = Phi.shape[2]       #number of local features vectors in Phi
-    d = Phi[0,:,s1].shape[0] #dimension of the local feature vector
+    N = Phi.shape[1]       #number of local features vectors in Phi
+    # d = Phi[0,:,s1].shape[-1] #dimension of the local feature vector
+    d = 2
+    print(Phi[0,:,s1].shape, d)
     
     ro = torch.zeros(d**2,d**2)
+    print(ro.shape)
     for j in range(Nt):
         #get the two local feature vectors 
-        phi1 = Phi[j, :, s1]
-        phi2 = Phi[j, :, s2]
+        phi1 = Phi[j, s1, :]
+        phi2 = Phi[j, s2, :]
 
         #trace over all the indices except s1 and s2 
         traceProd = 1
         for s in range(N):
             if s != s1 and s != s2:
                 x = Phi[j, :,s]
-                outer_product = x[:, None] @ x[None,:] 
+                outer_product = x[:, None] @ x[None, :] 
                 traceProd = traceProd * torch.trace(outer_product)
 
         #compute the order 4 tensor
         mat1 = phi1[:, None] @ phi1[None,:]
         mat2 = phi2[:, None] @ phi2[None,:]
 
-        ro_j = mat1[:, :, None] @ mat2[:,None,:]
+        ro_j = mat1[:, :, None] @ mat2[:, None, :]
         ro = ro + traceProd*ro_j.resize_(d**2,d**2) #reshape the reduced covariance as matrix 
         
         if j == 1000: #compute the reduced covariance matrix using 1000 images
             break
+
     return ro
 
 
@@ -124,5 +129,6 @@ Phi = custom_feature(train_loader)
 print(Phi.shape)
 
 #compute the reduced covariance matrix ro12
-ro = reduced_covariance(Phi, 0,1)
+ro = reduced_covariance(Phi, 0, 1)
+ro = reduced_covariance(Phi, 2, 3)
 print(ro.shape)

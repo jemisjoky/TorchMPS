@@ -46,7 +46,7 @@ num_batches = {name: total_num // batch_size for (name, total_num) in
                [('train', num_train), ('test', num_test)]}
 
 print(f"Training on {num_train} MNIST images \n"
-      f"(testing on {num_test}) for {num_epochs} epochs")
+    f"(testing on {num_test}) for {num_epochs} epochs")
 print(f"Maximum MPS bond dimension = {bond_dim}")
 print(f" * {'Adaptive' if adaptive_mode else 'Fixed'} bond dimensions")
 print(f" * {'Periodic' if periodic_bc else 'Open'} boundary conditions")
