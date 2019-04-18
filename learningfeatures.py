@@ -10,13 +10,26 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision
 from torchvision import transforms, utils
 import random
+import math
+
+
+N_FAKE_IMGS = 100
+HEIGHT = 32
+WIDTH = 32
+
+HEIGHT = 8
+WIDTH = 8
+
+FEATURE_MAP_D = 2
+TRUNCATION_EPS = 1e-3
 
 def loadMnist(batch_size=1):
     """ Load MNIST dataset"""
 
     #transform input/output to tensor
     transform = transforms.Compose([
-        transforms.ToTensor()
+        transforms.Pad(2), # Makes 32x32, Log2(32) = 5  
+        transforms.ToTensor(),  
     ])
 
     #train set
@@ -28,6 +41,7 @@ def loadMnist(batch_size=1):
 
     #test set
     test_set = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+
     test_loader = torch.utils.data.DataLoader(
                     dataset=test_set,
                     batch_size=batch_size,
@@ -39,31 +53,35 @@ def local_feature_vectors(vector):
     """ Transform a vector representing an image to a matrix where the first row=[1,1,...,1] 
         and the elements of the second row are the elements of the vector  """
 
-    N = vector.shape[1]
-    phi = torch.ones(2, N)
-    phi[1,:] = vector
-    return torch.transpose(phi, 0, 1)
+    N = HEIGHT * WIDTH
+    phi = np.ones((2, N))
+    phi[1, :] = np.squeeze(vector)
 
-def custom_feature(data_loader):
+    return phi.T
+
+
+def custom_feature(data_loader, fake_img=True):
     """ For each image: 
             Transform each pixel of each image to a vector of dimension 2 """
     
     #dimensions of feature tensor Phi
-    dim1 = len(data_loader) #number of images
-    
-    #get height and width of an image
-    for batch_idx, (x, target) in enumerate(data_loader):
-        [h,w] = x[0,0,:,:].shape
-        break 
-    
-    dim2 = h*w
+    dim1 = N_FAKE_IMGS # len(data_loader) #number of images
+
+    if not fake_img:
+        dim1 = len(data_loader)
+
+    dim2 = HEIGHT * WIDTH
     dim3 = 2 
     
-    Phi = torch.zeros(dim1, dim2, dim3)
-    
+    Phi = np.zeros((dim1, dim2, dim3))
+   
     for batch_idx, (x, target) in enumerate(data_loader):
-        image = x[0,0,:,:]
-        image.resize_(1, dim2) #vectorize the image
+        if fake_img:
+            # Expand
+            x = x[None, :]
+
+        image = x[0, 0, :, :]
+        image = image.flatten() #vectorize the image
         image = local_feature_vectors(image)
         Phi[batch_idx, :, :] = image
 
@@ -75,59 +93,120 @@ def reduced_covariance(Phi, s1, s2):
 
     Nt = Phi.shape[0]      #number of images
     N = Phi.shape[1]       #number of local features vectors in Phi
-    # d = Phi[0,:,s1].shape[-1] #dimension of the local feature vector
-    d = 2
+    d = FEATURE_MAP_D
     
-    ro = torch.zeros(d**2,d**2)
-    print(ro.shape)
+    ro = np.zeros((d**2,d**2))
+
+    n_images = 0
+    print(Phi.shape)
+
     for j in range(Nt):
+        if j == 1000: #compute the reduced covariance matrix using 1000 images
+            break
+
+        n_images += 1
         #get the two local feature vectors 
         phi1 = Phi[j, s1, :]
         phi2 = Phi[j, s2, :]
 
         #trace over all the indices except s1 and s2 
-        traceProd = 1
+        trace_tracker = 1
         for s in range(N):
             if s != s1 and s != s2:
                 x = Phi[j, s, :]
-                outer_product = np.outer(x, np.transpose(x)) 
-                traceProd *= torch.trace(outer_product)
+                outer_product = np.outer(x, x.T) 
+                # Again define ρ as a sum of outer products of the training data feature vectors as before in Eq. 10 ... 
+
+                # TODO: If not sum, eigenvalues blow up!
+                trace_tracker += np.trace(outer_product)
+
+                # OLD: trace_tracker *= np.trace(outer_product)
 
         #compute the order 4 tensor
-        mat1 = phi1[:, None] @ phi1[None,:]
-        mat2 = phi2[:, None] @ phi2[None,:]
+        mat1 = np.outer(phi1, phi1.T)
+        mat2 = np.outer(phi2, phi2.T)
 
-        ro_j = mat1[:, :, None] @ mat2[:, None, :]
-        ro +=  traceProd * ro_j.resize_(d**2,d**2) #reshape the reduced covariance as matrix 
-        
-        if j == 1000: #compute the reduced covariance matrix using 1000 images
-            break
+        # TODO: @Adel; Not equal!
+        ro_j = np.outer(mat1, mat2)
+        # ro_j2 = np.kron(mat1, mat2)
 
-    return ro
+        # TODO: Should this also now be a plus?
+        ro += trace_tracker * ro_j
+        # OLD: ro += trace_tracker * ro_j
 
+    return ro / n_images
 
 
 ################################### Test ###############################################################
 
-#test load mnist
-train_loader, test_loader = loadMnist()
+# #test load mnist
+# train_loader, test_loader = loadMnist()
 
-print('==>>> total trainning batch number: {}'.format(len(train_loader)))
-print('==>>> total testing batch number: {}'.format(len(test_loader)))
+# print('==>>> total trainning batch number: {}'.format(len(train_loader)))
+# print('==>>> total testing batch number: {}'.format(len(test_loader)))
 
-print('==>>> Plot some images:')
-for batch_idx, (x, target) in enumerate(train_loader):
-    print(batch_idx, x.shape, target)
-    plt.imshow(x[0,0,:,:])
-    plt.show()
-    if batch_idx == 1:
-        break
+# Phi = custom_feature(train_loader, fake_img=False)
+# print(Phi.shape)
 
+# # Fake images for faster testing
+train_loader = np.random.random((N_FAKE_IMGS, 1, HEIGHT, WIDTH))
 #test feature map
-Phi = custom_feature(train_loader)
+Phi = custom_feature(zip(train_loader, np.random.random(N_FAKE_IMGS)))
 print(Phi.shape)
 
-#compute the reduced covariance matrix ro12
-ro = reduced_covariance(Phi, 0, 1)
-ro = reduced_covariance(Phi, 2, 3)
-print(ro.shape)
+tree_depth = int(math.log2(HEIGHT * WIDTH))
+iterates = HEIGHT * WIDTH
+
+tree_tensor = dict()
+
+for layer in range(tree_depth):
+    iterates = iterates // 2
+    next_phi = []
+    for i in range(iterates):
+        if i % 2 != 0: continue 
+
+        ind1 = i
+        ind2 = i + 1
+
+        ro = reduced_covariance(Phi, ind1, ind2)
+        u, s, v = np.linalg.svd(ro)
+        print("({}, {})\nU\n{}\nS{}\nV{}\n".format(ind1, ind2, u, s, v))
+
+        eigenvalues = s**2
+        trace = np.sum(eigenvalues)
+
+        truncation_sum = 0
+        # Gross notation, but makes indexing nicer
+        first_truncated_eigenvalue = 0
+
+        for eig_idx, e in enumerate(eigenvalues):
+            truncation_sum += e
+            first_truncated_eigenvalue += 1
+
+            if (truncation_sum / trace) > (1 - TRUNCATION_EPS):
+                break
+
+        truncated_U = u[:, :first_truncated_eigenvalue] # keep first r cols of U
+        tree_tensor[layer, ind1, ind2] = truncated_U
+
+        z = np.dot(np.outer(x, y).flatten(), truncated_U)
+        next_phi.append(z)
+
+    next_phi = np.concatenate(next_phi)
+    Phi = next_phi
+
+
+
+
+
+
+"""
+
+For each pair of indices,
+
+calculate ro
+svd
+truncation 
+store U
+
+"""
