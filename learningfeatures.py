@@ -49,6 +49,33 @@ def loadMnist(batch_size=1):
     return [train_loader, test_loader] 
 
 
+def generate_new_phi(Phi, tree_tensor, layer):
+    print(Phi.shape)
+    iterates = Phi.shape[1] // 2
+    Phi_new = []
+    for imageidx, image in enumerate(Phi):
+        coarse_grained = []
+        for i in range(iterates):
+            if i % 2 != 0: continue 
+
+            ind1 = i 
+            ind2 = i + 1
+
+            x = Phi[imageidx, ind1, :]
+            y = Phi[imageidx, ind2, :]
+
+            truncated_U = tree_tensor[layer, ind1, ind2]
+            
+            # TODO: Adel - doesn't seem right            
+            z = np.dot(truncated_U.T, np.outer(x, y).flatten())
+
+            coarse_grained.append(z)
+
+        Phi_new.append(np.array(coarse_grained))
+
+    return np.array (Phi_new)
+
+
 def local_feature_vectors(vector):
     """ Transform a vector representing an image to a matrix where the first row=[1,1,...,1] 
         and the elements of the second row are the elements of the vector  """
@@ -195,9 +222,7 @@ for layer in range(tree_depth):
         # z = np.dot(np.outer(x, y).flatten(), truncated_U)
         # print(z.shape)
 
-    next_phi = np.concatenate(next_phi)
-    Phi = next_phi
-
+    Phi = generate_new_phi(Phi, tree_tensor, layer)
 
 
 
