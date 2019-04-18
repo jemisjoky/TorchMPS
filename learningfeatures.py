@@ -189,8 +189,11 @@ for layer in range(tree_depth):
         truncated_U = u[:, :first_truncated_eigenvalue] # keep first r cols of U
         tree_tensor[layer, ind1, ind2] = truncated_U
 
-        z = np.dot(np.outer(x, y).flatten(), truncated_U)
-        next_phi.append(z)
+        # # TODO: @Adel - please check formula, doesn't seem right?
+        # x = Phi[0, ind1, :]
+        # y = Phi[0, ind2, :]
+        # z = np.dot(np.outer(x, y).flatten(), truncated_U)
+        # print(z.shape)
 
     next_phi = np.concatenate(next_phi)
     Phi = next_phi
