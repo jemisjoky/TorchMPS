@@ -172,7 +172,7 @@ def init_tensor(shape, bond_str, init_method):
 
         init_method = init_str
     else:
-        std = 1e-6
+        std = 1e-9
 
     # Check that bond_str is properly sized and doesn't have repeat indices
     assert len(shape) == len(bond_str)

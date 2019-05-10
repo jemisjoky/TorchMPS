@@ -5,6 +5,7 @@ TODO:
     [NOTE: I think this is an "isometric tight frame", whose explicit construction is given in https://www.semanticscholar.org/paper/ISOMETRIC-TIGHT-FRAMES-Reams-Waldron/9199c3eb5bfe93b19d17d92c0a9f2cacbe02a9ad]
 
     (2) Revisit my earlier idea for refactoring my code to get rid of all these nuisance classes.
+
 """
 
 
@@ -18,12 +19,23 @@ class TI_MPS(nn.Module):
     """
     Sequence MPS which converts input of arbitrary length to a single output vector
     """
-    def __init__(self, feature_dim, output_dim, bond_dim):
+    def __init__(self, feature_dim, output_dim, bond_dim, parallel_eval=False,
+                 init_std=1e-9):
         super().__init__()
-        pass
 
-        # INITIALIZE SINGLE CORE TENSOR NEAR IDENTITY
-        # SAVE FIXED_VECTOR AND FIXED_OUTPUT AS (FUNCTIONAL) ATTRIBUTES
+        # Initialize the core tensor defining our model near the identity
+        # This tensor holds all of the trainable parameters of our model
+        tensor = init_tensor(bond_str='lri', 
+                             shape=[bond_dim, bond_dim, feature_dim], 
+                             init_method=('random_eye', init_std))
+        self.core_tensor = InputSite(tensor)
+
+        # Define our initial vector and terminal matrix, which are both 
+        # functional modules, i.e. unchanged during training
+        self.init_vector = FixedVector(bond_dim)
+        self.terminal_mat = FixedOutput(bond_dim, output_dim)
+
+        self.parallel_eval = parallel_eval
 
     def forward(self, input_data):
         """
@@ -34,10 +46,43 @@ class TI_MPS(nn.Module):
             or a list of length batch_size, whose i'th item is a matrix of shape 
             [length_i, feature_dim].
         """
-        pass
+        # Reformat our input to a common format that handles both input types
+        if isinstance(input_data, torch.Tensor):
+            shape = input_data.shape
+            assert len(shape) == 3
+            assert shape[2] == self.feature_dim
+            batch_size = shape[0]
 
-        # REPRESENT INPUT AS LIST OF BATCH TENSORS, WHERE EITHER THE LIST LENGTH OR THE BATCH DIMENSION IS 1
-        
+            # Wrap our batch tensor as a singleton list
+            input_data = [input_data]
+
+        elif isinstance(input_data, list):
+            batch_size = len(input_data)
+
+            new_input = []
+            for input_seq in input_data:
+                shape = input_seq.shape
+                assert len(shape) == 2
+                assert shape[1] == self.feature_dim
+
+                # Expand each input_seq to a batch tensor with batch_size 1
+                new_input.append(torch.unsqueeze(input_seq, 0))
+
+            input_data = new_input
+        else:
+            raise ValueError("input_data must either be Tensor with shape"
+                             "[batch_size, length, feature_dim], or list of"
+                             "Tensors with shapes [length_i, feature_dim]")
+
+        # Loop through batch tensors in list and generate batch of outputs
+        output_list = []
+        for batch_input in input_data:
+            # Build up contractable_list as EdgeVec + MatRegion (to handle
+            # inputs) + OutputMat
+            contractable_list = [self.init_vector()]
+
+            mat_list
+
         # LOOP OVER BATCH TENSORS IN LIST, EACH TIME CONTRACTING INPUT TO GET MAT_REGION
 
             # WRAP MAT_REGION AS CONTRACTABLE_LIST WITH INITIAL VECTOR, OUTPUT CORE
@@ -45,7 +90,6 @@ class TI_MPS(nn.Module):
             # APPEND TO OUTPUT LIST
 
         # STACK OUTPUT LIST TO GET MATRIX OF BATCH OUTPUTS
-
 
 
 class MPS(nn.Module):
@@ -623,7 +667,6 @@ class MergedLinearRegion(LinearRegion):
 class InputRegion(nn.Module):
     """
     Contiguous region of MPS cores taking in multiple input data, bond_str = 'slri'
-
     """
     def __init__(self, tensor=None, input_dim=None, bond_dim=None,
                  feature_dim=None, init_std=1e-9, min_init=False):
@@ -1005,3 +1048,59 @@ class MergedOutput(nn.Module):
 
     def __len__(self):
         return 1
+
+class FixedVector(nn.Module):
+    """
+    Fixed all-ones vector to act as beginning or end of MPS
+    """
+    def __init__(self, bond_dim, is_left_vec=True):
+        super().__init__()
+
+        vec = torch.ones(bond_dim)
+        vec.requires_grad = False
+
+        self.vec = vec
+        self.is_left_vec = is_left_vec
+
+    def forward(self):
+        """
+        Return our fixed vector wrapped as an EdgeVec contractable
+        """
+        return EdgeVec(self.vec, self.is_left_vec)
+
+    def core_len(self):
+        return 1
+
+    def __len__(self):
+        return 0
+
+class FixedOutput(nn.Module):
+    """
+    Fixed output matrix to transmute virtual state of MPS into output vector
+    """
+    def __init__(self, bond_dim, output_dim, is_left_mat=True):
+        super().__init__()
+
+        if output_dim > bond_dim:
+            raise ValueError("FixedOutput core currently only supports case of"
+                             "bond_dim >= output_dim, but here bond_dim="
+                            f"{bond_dim} and output_dim={output_dim}")
+
+        mat = torch.eye(bond_dim, output_dim)
+        mat.requires_grad = False
+
+        self.mat = mat
+        self.is_left_mat = is_left_mat
+
+    def forward(self):
+        """
+        Return our fixed matrix wrapped as an OutputMat contractable
+        """
+        return OutputMat(self.mat, self.is_left_mat)
+
+    def core_len(self):
+        return 1
+
+    def __len__(self):
+        return 0
+

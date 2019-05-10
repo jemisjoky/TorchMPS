@@ -325,6 +325,33 @@ class SingleMat(Contractable):
 
         super().__init__(mat, bond_str='blr')
 
+class OutputMat(Contractable):
+    """
+    An output core associated with an edge of our MPS
+    """
+    def __init__(self, mat, is_left_mat):
+        # Check the input shape
+        if len(mat.shape) not in [2, 3]:
+            raise ValueError("OutputMat tensors must have shape [batch_size, "
+                             "D, output_dim], or else [D, output_dim] if "
+                             "batch size has already been set")
+
+        # OutputMats on left edge will have a right-facing bond, and vice versa
+                bond_str = 'b' + ('r' if is_left_mat else 'l') + 'o'
+                super().__init__(mat, bond_str=bond_str)
+
+    def __mul__(self, edge_vec, rmul=False):
+        """
+        Multiply with an edge vector along the shared linear index
+        """
+        if not isinstance(edge_vec, EdgeVec):
+            raise NotImplemented
+        else:
+            return super().__mul__(edge_vec, rmul)
+
+    def __rmul__(self, edge_vec):
+        return self.__mul__(edge_vec, rmul=True)
+
 class EdgeVec(Contractable):
     """
     A batch of vectors associated with an edge of our MPS
