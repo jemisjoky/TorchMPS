@@ -1,19 +1,17 @@
 """
 TODO:
 
-    (1) Create FixedVector and FixedOutput classes, which are "functional" in the sense of having no trainable parameters. FixedVector is all ones, and FixedOutput is either diagonal (output_dim <= bond_dim), or some type of isometric embedding of the vectors (output_dim > bond_dim)
-    [NOTE: I think this is an "isometric tight frame", whose explicit construction is given in https://www.semanticscholar.org/paper/ISOMETRIC-TIGHT-FRAMES-Reams-Waldron/9199c3eb5bfe93b19d17d92c0a9f2cacbe02a9ad]
+    (1) Allow FixedOutput to deal with case of output_dim > bond_dim, through some type of isometric layout of the classification vectors
+    [NOTE: Perhaps an "isometric tight frame" is the right construction, whose explicit construction is given in https://www.semanticscholar.org/paper/ISOMETRIC-TIGHT-FRAMES-Reams-Waldron/9199c3eb5bfe93b19d17d92c0a9f2cacbe02a9ad]
 
-    (2) Revisit my earlier idea for refactoring my code to get rid of all these nuisance classes.
+    (2) Revisit my earlier idea for refactoring my code to get rid of a bunch of nuisance classes.
 
 """
-
-
 import torch
 import torch.nn as nn
 from utils import init_tensor, svd_flex
 from contractables import SingleMat, MatRegion, OutputCore, ContractableList, \
-                          EdgeVec
+                          EdgeVec, OutputMat
 
 class TI_MPS(nn.Module):
     """
@@ -28,13 +26,16 @@ class TI_MPS(nn.Module):
         tensor = init_tensor(bond_str='lri', 
                              shape=[bond_dim, bond_dim, feature_dim], 
                              init_method=('random_eye', init_std))
-        self.core_tensor = InputSite(tensor)
+        self.core_tensor = nn.Parameter(tensor)
 
         # Define our initial vector and terminal matrix, which are both 
         # functional modules, i.e. unchanged during training
         self.init_vector = FixedVector(bond_dim)
         self.terminal_mat = FixedOutput(bond_dim, output_dim)
 
+        self.feature_dim = feature_dim
+        self.output_dim = output_dim
+        self.bond_dim = bond_dim
         self.parallel_eval = parallel_eval
 
     def forward(self, input_data):
@@ -77,20 +78,34 @@ class TI_MPS(nn.Module):
         # Loop through batch tensors in list and generate batch of outputs
         output_list = []
         for batch_input in input_data:
-            # Build up contractable_list as EdgeVec + MatRegion (to handle
-            # inputs) + OutputMat
-            contractable_list = [self.init_vector()]
+            seq_len = batch_input.size(1)
+            assert seq_len > 0
 
-            mat_list
+            # For each batch, build up contractable_list as EdgeVec + MatRegion
+            # + OutputMat
+            expanded_core = self.core_tensor.expand([seq_len, 
+                              self.bond_dim, self.bond_dim, self.feature_dim])
+            contractable_list = [InputRegion(expanded_core)(batch_input)]
 
-        # LOOP OVER BATCH TENSORS IN LIST, EACH TIME CONTRACTING INPUT TO GET MAT_REGION
+            # Prepend an EdgeVec and append an OutputMat
+            contractable_list = [self.init_vector()] + contractable_list
+            contractable_list.append(self.terminal_mat())
 
-            # WRAP MAT_REGION AS CONTRACTABLE_LIST WITH INITIAL VECTOR, OUTPUT CORE
-            # EVALUATE CONTRACTABLE_LIST
-            # APPEND TO OUTPUT LIST
+            # Wrap contractable_list as a ContractableList instance
+            contractable_list = ContractableList(contractable_list)
 
-        # STACK OUTPUT LIST TO GET MATRIX OF BATCH OUTPUTS
+            # Contract everything in contractable_list
+            output = contractable_list.reduce(parallel_eval=self.parallel_eval)
+            assert output.bond_str == 'bo'
+            assert output.tensor.size(1) == self.output_dim
 
+            output_list.append(output.tensor)
+
+        # Concatenate all our outputs into a single batch output tensor
+        output = torch.cat(output_list)
+        assert output.size(0) == batch_size
+
+        return output
 
 class MPS(nn.Module):
     """
@@ -668,8 +683,7 @@ class InputRegion(nn.Module):
     """
     Contiguous region of MPS cores taking in multiple input data, bond_str = 'slri'
     """
-    def __init__(self, tensor=None, input_dim=None, bond_dim=None,
-                 feature_dim=None, init_std=1e-9, min_init=False):
+    def __init__(self, tensor):
         super().__init__()
         # Register our tensor as a Pytorch Parameter
         self.tensor = nn.Parameter(tensor.contiguous())
@@ -1078,7 +1092,7 @@ class FixedOutput(nn.Module):
     """
     Fixed output matrix to transmute virtual state of MPS into output vector
     """
-    def __init__(self, bond_dim, output_dim, is_left_mat=True):
+    def __init__(self, bond_dim, output_dim, is_left_mat=False):
         super().__init__()
 
         if output_dim > bond_dim:

@@ -48,16 +48,15 @@ class Contractable:
                             f"({len(bond_str)}) must match order of "
                             f"tensor ({len(shape)})")
 
-        # Set the global batch size if it hasn't been set yet
-        elif global_bs is None:
+        # Set the global batch size if it is unset or needs to be updated
+        elif global_bs is None or global_bs != batch_dim:
             Contractable.global_bs = batch_dim
 
         # Check that global batch size agrees with input tensor's first dim
         elif global_bs != batch_dim:
                 raise RuntimeError(f"Batch size previously set to {global_bs}"
                                     ", but input tensor has batch size "
-                                   f"{batch_dim}. Try calling "
-                                    "Contractable.unset_batch_size() first")
+                                   f"{batch_dim}")
         
         # Set the defining attributes of our Contractable
         self.tensor = tensor
@@ -337,8 +336,8 @@ class OutputMat(Contractable):
                              "batch size has already been set")
 
         # OutputMats on left edge will have a right-facing bond, and vice versa
-                bond_str = 'b' + ('r' if is_left_mat else 'l') + 'o'
-                super().__init__(mat, bond_str=bond_str)
+        bond_str = 'b' + ('r' if is_left_mat else 'l') + 'o'
+        super().__init__(mat, bond_str=bond_str)
 
     def __mul__(self, edge_vec, rmul=False):
         """
