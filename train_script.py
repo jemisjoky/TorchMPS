@@ -10,7 +10,7 @@ start_time = time.time()
 
 # MPS parameters
 bond_dim      = 20
-adaptive_mode = True
+adaptive_mode = False
 periodic_bc   = False
 
 # Training parameters

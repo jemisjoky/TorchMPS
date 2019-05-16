@@ -2,7 +2,7 @@
 import torch
 import sys
 
-sys.path.append('/home/jemis/torch_mps')
+sys.path.append('..')
 from utils import svd_flex
 
 shapes = [[2, 4],

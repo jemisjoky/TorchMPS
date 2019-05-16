@@ -160,8 +160,19 @@ def init_tensor(shape, bond_str, init_method):
 
         init_method: The method used to initialize the entries of our tensor.
                      This can be either a string, or else a tuple whose first
-                     entry is an initialization method and whose second entry
-                     is a scale/standard deviation parameter
+                     entry is an initialization method and whose remaining 
+                     entries are specific to that method. In each case, std
+                     will always refer to a standard deviation for a random normal random component of each entry of the tensor. 
+
+                     Allowed options are:
+                        * ('random_eye', std): Initialize each tensor input 
+                            slice close to the identity
+                        * ('random_zero', std): Initialize each tensor input 
+                            slice close to the zero matrix
+                        * ('min_random_eye', std, init_dim): Initialize each 
+                            tensor input slice close to a truncated identity 
+                            matrix, whose truncation leaves init_dim unit 
+                            entries on the diagonal
     """
     # Unpack init_method if it is a tuple
     if not isinstance(init_method, str):
@@ -178,7 +189,7 @@ def init_tensor(shape, bond_str, init_method):
     assert len(shape) == len(bond_str)
     assert len(set(bond_str)) == len(bond_str)
 
-    if init_method not in ['random_eye', 'min_random_eye', 'full_random']:
+    if init_method not in ['random_eye', 'min_random_eye', 'random_zero']:
         raise ValueError(f"Unknown initialization method: {init_method}")
 
     if init_method in ['random_eye', 'min_random_eye']:
@@ -213,13 +224,51 @@ def init_tensor(shape, bond_str, init_method):
         # Add on a bit of random noise
         tensor += std * torch.randn(shape)
 
-    elif init_method == 'full_random':
+    elif init_method == 'random_zero':
         tensor = std * torch.randn(shape)
 
     return tensor
 
 
 ### OLDER MISCELLANEOUS FUNCTIONS ###
+
+def onehot(labels, max_value):
+    """
+    Convert a batch of labels from the set {0, 1,..., num_value-1} into their
+    onehot encoded counterparts
+    """
+    label_vecs = torch.zeros([len(labels), max_value])
+
+    for i, label in enumerate(labels):
+        label_vecs[i, label] = 1.
+
+    return label_vecs
+
+def joint_shuffle(input_imgs, input_lbls):
+    """
+    Take pytorch arrays of images and labels, jointly shuffle
+    them so that each label remains pointed to its corresponding
+    image, then return the reshuffled tensors. Works for both
+    regular and CUDA tensors.
+    """
+    assert input_imgs.is_cuda == input_lbls.is_cuda
+    use_gpu = input_imgs.is_cuda
+    if use_gpu:
+        input_imgs, input_lbls = input_imgs.cpu(), input_lbls.cpu()
+
+    images, labels = input_imgs.numpy(), input_lbls.numpy()
+
+    # Shuffle relative to the same seed
+    np.random.seed(0)
+    np.random.shuffle(images)
+    np.random.seed(0)
+    np.random.shuffle(labels)
+
+    images, labels = torch.from_numpy(images), torch.from_numpy(labels)
+    if use_gpu:
+        images, labels = images.cuda(), labels.cuda()
+
+    return images, labels
 
 def load_HV_data(length):
     """
@@ -273,41 +322,3 @@ def load_HV_data(length):
            torch.from_numpy(train_labels), \
            torch.from_numpy(test_images), \
            torch.from_numpy(test_labels)
-
-def onehot(labels, max_value):
-    """
-    Convert a batch of labels from the set {0, 1,..., num_value-1} into their
-    onehot encoded counterparts
-    """
-    label_vecs = torch.zeros([len(labels), max_value])
-
-    for i, label in enumerate(labels):
-        label_vecs[i, label] = 1.
-
-    return label_vecs
-
-def joint_shuffle(input_imgs, input_lbls):
-    """
-    Take pytorch arrays of images and labels, jointly shuffle
-    them so that each label remains pointed to its corresponding
-    image, then return the reshuffled tensors. Works for both
-    regular and CUDA tensors.
-    """
-    assert input_imgs.is_cuda == input_lbls.is_cuda
-    use_gpu = input_imgs.is_cuda
-    if use_gpu:
-        input_imgs, input_lbls = input_imgs.cpu(), input_lbls.cpu()
-
-    images, labels = input_imgs.numpy(), input_lbls.numpy()
-
-    # Shuffle relative to the same seed
-    np.random.seed(0)
-    np.random.shuffle(images)
-    np.random.seed(0)
-    np.random.shuffle(labels)
-
-    images, labels = torch.from_numpy(images), torch.from_numpy(labels)
-    if use_gpu:
-        images, labels = images.cuda(), labels.cuda()
-
-    return images, labels

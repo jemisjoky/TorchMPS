@@ -2,7 +2,7 @@
 import torch
 import sys
 
-sys.path.append('/home/jemis/torch_mps')
+sys.path.append('..')
 from contractables import *
 from torchmps import *
 

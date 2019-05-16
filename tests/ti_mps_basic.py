@@ -3,7 +3,7 @@ import torch
 import sys
 from random import randint
 
-sys.path.append('/home/jemis/torch_mps')
+sys.path.append('..')
 from torchmps import TI_MPS
 
 feature_dim = 3
