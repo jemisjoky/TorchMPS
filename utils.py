@@ -244,31 +244,29 @@ def onehot(labels, max_value):
 
     return label_vecs
 
-def joint_shuffle(input_imgs, input_lbls):
+def joint_shuffle(input_data, input_labels):
     """
-    Take pytorch arrays of images and labels, jointly shuffle
-    them so that each label remains pointed to its corresponding
-    image, then return the reshuffled tensors. Works for both
-    regular and CUDA tensors.
+    Shuffle input data and labels in a joint manner, so each label points to 
+    its corresponding datum. Works for both regular and CUDA tensors
     """
-    assert input_imgs.is_cuda == input_lbls.is_cuda
-    use_gpu = input_imgs.is_cuda
+    assert input_data.is_cuda == input_labels.is_cuda
+    use_gpu = input_data.is_cuda
     if use_gpu:
-        input_imgs, input_lbls = input_imgs.cpu(), input_lbls.cpu()
+        input_data, input_labels = input_data.cpu(), input_labels.cpu()
 
-    images, labels = input_imgs.numpy(), input_lbls.numpy()
+    data, labels = input_data.numpy(), input_labels.numpy()
 
     # Shuffle relative to the same seed
     np.random.seed(0)
-    np.random.shuffle(images)
+    np.random.shuffle(data)
     np.random.seed(0)
     np.random.shuffle(labels)
 
-    images, labels = torch.from_numpy(images), torch.from_numpy(labels)
+    data, labels = torch.from_numpy(data), torch.from_numpy(labels)
     if use_gpu:
-        images, labels = images.cuda(), labels.cuda()
+        data, labels = data.cuda(), labels.cuda()
 
-    return images, labels
+    return data, labels
 
 def load_HV_data(length):
     """

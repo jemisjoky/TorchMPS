@@ -25,6 +25,7 @@ class TI_MPS(nn.Module):
         tensor = init_tensor(bond_str='lri', 
                              shape=[bond_dim, bond_dim, feature_dim], 
                              init_method=('random_zero', init_std))
+
         self.core_tensor = nn.Parameter(tensor)
 
         # Define our initial vector and terminal matrix, which are both 
@@ -84,7 +85,8 @@ class TI_MPS(nn.Module):
             # + OutputMat
             expanded_core = self.core_tensor.expand([seq_len, 
                               self.bond_dim, self.bond_dim, self.feature_dim])
-            contractable_list = [InputRegion(expanded_core)(batch_input)]
+            input_region = InputRegion(expanded_core, ephemeral=True)
+            contractable_list = [input_region(batch_input)]
 
             # Prepend an EdgeVec and append an OutputMat
             contractable_list = [self.init_vector()] + contractable_list
@@ -684,13 +686,17 @@ class InputRegion(nn.Module):
     """
     Contiguous region of MPS cores taking in multiple input data, bond_str = 'slri'
     """
-    def __init__(self, tensor, resnet_style=True):
+    def __init__(self, tensor, resnet_style=True, ephemeral=False):
         super().__init__()
         # Make sure the component matrices are square
         assert tensor.size(1) == tensor.size(2)
 
-        # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor.contiguous())
+        # Register our tensor, either as a Pytorch Parameter or Tensor
+        if ephemeral:
+            self.tensor = tensor.contiguous()
+        else:
+            self.tensor = nn.Parameter(tensor.contiguous())
+        
         self.resnet_style = resnet_style
 
     def forward(self, input_data):

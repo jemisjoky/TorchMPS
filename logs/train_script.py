@@ -6,8 +6,7 @@ import argparse
 import numpy as np
 from torchvision import transforms, datasets
 
-# torchmps_dir = '/home/jemis/torch_mps'
-torchmps_dir = '/network/home/millerja/torchmps'
+torchmps_dir = '..'
 sys.path.append(torchmps_dir)
 
 from torchmps import MPS
