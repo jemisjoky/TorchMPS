@@ -693,9 +693,9 @@ class InputRegion(nn.Module):
 
         # Register our tensor, either as a Pytorch Parameter or Tensor
         if ephemeral:
-            self.tensor = tensor.contiguous()
+            self.register_buffer(name='tensor', tensor=tensor.contiguous())
         else:
-            self.tensor = nn.Parameter(tensor.contiguous())
+            self.register_parameter(name='tensor', tensor=tensor.contiguous())
         
         self.resnet_style = resnet_style
 
@@ -1089,8 +1089,8 @@ class FixedVector(nn.Module):
 
         vec = torch.ones(bond_dim)
         vec.requires_grad = False
+        self.register_buffer(name='vec', tensor=vec)
 
-        self.vec = vec
         self.is_left_vec = is_left_vec
 
     def forward(self):
@@ -1119,8 +1119,8 @@ class FixedOutput(nn.Module):
 
         mat = torch.eye(bond_dim, output_dim)
         mat.requires_grad = False
+        self.register_buffer(name='mat', tensor=mat)
 
-        self.mat = mat
         self.is_left_mat = is_left_mat
 
     def forward(self):
