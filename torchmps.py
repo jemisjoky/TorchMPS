@@ -1,10 +1,10 @@
 """
 TODO:
 
-    (1) Allow FixedOutput to deal with case of output_dim > bond_dim, through some type of isometric layout of the classification vectors
+    (1) Allow TerminalMat to deal with case of output_dim > bond_dim, through some type of isometric layout of the classification vectors
     [NOTE: Perhaps an "isometric tight frame" is the right construction, whose explicit construction is given in https://www.semanticscholar.org/paper/ISOMETRIC-TIGHT-FRAMES-Reams-Waldron/9199c3eb5bfe93b19d17d92c0a9f2cacbe02a9ad]
 
-    (2) Revisit my earlier idea for refactoring my code to get rid of a bunch of nuisance classes.
+    (2) Revisit my earlier idea for refactoring my code to simplify a bunch of nuisance classes.
 """
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ class TI_MPS(nn.Module):
     Sequence MPS which converts input of arbitrary length to a single output vector
     """
     def __init__(self, feature_dim, output_dim, bond_dim, parallel_eval=False,
-                 init_std=1e-9):
+                 fixed_ends=False, init_std=1e-9):
         super().__init__()
 
         # Initialize the core tensor defining our model near the identity
@@ -25,13 +25,14 @@ class TI_MPS(nn.Module):
         tensor = init_tensor(bond_str='lri', 
                              shape=[bond_dim, bond_dim, feature_dim], 
                              init_method=('random_zero', init_std))
-
-        self.core_tensor = nn.Parameter(tensor)
+        self.register_parameter(name='core_tensor', param=nn.Parameter(tensor))
 
         # Define our initial vector and terminal matrix, which are both 
         # functional modules, i.e. unchanged during training
-        self.init_vector = FixedVector(bond_dim)
-        self.terminal_mat = FixedOutput(bond_dim, output_dim)
+        assert isinstance(fixed_ends, bool)
+        self.init_vector = InitialVector(bond_dim, fixed_vec=fixed_ends)
+        self.terminal_mat = TerminalOutput(bond_dim, output_dim, 
+                                           fixed_mat=fixed_ends)
 
         self.feature_dim = feature_dim
         self.output_dim = output_dim
@@ -47,66 +48,76 @@ class TI_MPS(nn.Module):
             or a list of length batch_size, whose i'th item is a matrix of shape 
             [length_i, feature_dim].
         """
-        # Reformat our input to a common format that handles both input types
+        # Reformat our input to a batch format, padding with zeros as needed
+        batch_input = self.collate_input(input_data)
+        batch_size = batch_input.size(0)
+        seq_len = batch_input.size(1)
+
+        # Build up a contractable_list as EdgeVec + MatRegion + OutputMat
+        expanded_core = self.core_tensor.expand([seq_len, 
+                          self.bond_dim, self.bond_dim, self.feature_dim])
+        input_region = InputRegion(expanded_core, ephemeral=True)
+        contractable_list = [input_region(batch_input)]
+
+        # Prepend an EdgeVec and append an OutputMat
+        contractable_list = [self.init_vector()] + contractable_list
+        contractable_list.append(self.terminal_mat())
+
+        # Wrap contractable_list as a ContractableList instance
+        contractable_list = ContractableList(contractable_list)
+
+        # Contract everything in contractable_list
+        output = contractable_list.reduce(parallel_eval=self.parallel_eval)
+        batch_output = output.tensor
+
+        # Check shape before returning output values
+        assert output.bond_str == 'bo'
+        assert batch_output.size(0) == batch_size
+        assert batch_output.size(1) == self.output_dim
+
+        return batch_output
+
+    def collate_input(self, input_data):
+        """
+        Converts input list of sequences into a single batch sequence tensor.
+
+        If input is already a batch tensor, it is returned unchanged. Otherwise,
+        convert input list into a batch sequence with length equal to the 
+        longest input sequence. Shorter sequences are padded at end with zeros.
+
+        Args:
+            input_data: Either a tensor of shape [batch_size, length, feature_dim], 
+            or a list of length batch_size, whose i'th item is a matrix of shape 
+            [length_i, feature_dim].
+        """
+        # If we already have a batch tensor, just return it after making checks
         if isinstance(input_data, torch.Tensor):
             shape = input_data.shape
             assert len(shape) == 3
             assert shape[2] == self.feature_dim
             batch_size = shape[0]
 
-            # Wrap our batch tensor as a singleton list
-            input_data = [input_data]
+            return input_data
 
         elif isinstance(input_data, list):
             batch_size = len(input_data)
+            max_len = max([input_seq.size(0) for input_seq in input_data])
 
-            new_input = []
-            for input_seq in input_data:
+            batch_input = torch.zeros([batch_size, max_len, self.feature_dim])
+            for i, input_seq in enumerate(input_data):
                 shape = input_seq.shape
                 assert len(shape) == 2
                 assert shape[1] == self.feature_dim
 
-                # Expand each input_seq to a batch tensor with batch_size 1
-                new_input.append(torch.unsqueeze(input_seq, 0))
+                # Copy this sequence into batch_input
+                batch_input[i, :shape[0]] = input_seq
 
-            input_data = new_input
+            return batch_input
         else:
             raise ValueError("input_data must either be Tensor with shape"
                              "[batch_size, length, feature_dim], or list of"
                              "Tensors with shapes [length_i, feature_dim]")
 
-        # Loop through batch tensors in list and generate batch of outputs
-        output_list = []
-        for batch_input in input_data:
-            seq_len = batch_input.size(1)
-            assert seq_len > 0
-
-            # For each batch, build up contractable_list as EdgeVec + MatRegion
-            # + OutputMat
-            expanded_core = self.core_tensor.expand([seq_len, 
-                              self.bond_dim, self.bond_dim, self.feature_dim])
-            input_region = InputRegion(expanded_core, ephemeral=True)
-            contractable_list = [input_region(batch_input)]
-
-            # Prepend an EdgeVec and append an OutputMat
-            contractable_list = [self.init_vector()] + contractable_list
-            contractable_list.append(self.terminal_mat())
-
-            # Wrap contractable_list as a ContractableList instance
-            contractable_list = ContractableList(contractable_list)
-
-            # Contract everything in contractable_list
-            output = contractable_list.reduce(parallel_eval=self.parallel_eval)
-            assert output.bond_str == 'bo'
-            assert output.tensor.size(1) == self.output_dim
-
-            output_list.append(output.tensor)
-
-        # Concatenate all our outputs into a single batch output tensor
-        output = torch.cat(output_list)
-        assert output.size(0) == batch_size
-
-        return output
 
 class MPS(nn.Module):
     """
@@ -468,6 +479,7 @@ class MergedLinearRegion(LinearRegion):
         else:
             return output
 
+    @torch.no_grad()
     def merge(self, offset):
         """
         Convert unmerged modules in self.module_list to merged counterparts
@@ -477,76 +489,76 @@ class MergedLinearRegion(LinearRegion):
         """
         assert offset in [0, 1]
 
-        with torch.no_grad():
-            unmerged_list = self.module_list
+        unmerged_list = self.module_list
 
-            # Merge each core internally and add the results to midway_list
-            site_num = offset
-            merged_list = []
-            for core in unmerged_list:
-                assert not isinstance(core, MergedInput)
-                assert not isinstance(core, MergedOutput)
+        # Merge each core internally and add the results to midway_list
+        site_num = offset
+        merged_list = []
+        for core in unmerged_list:
+            assert not isinstance(core, MergedInput)
+            assert not isinstance(core, MergedOutput)
 
-                # Apply internal merging routine if our core supports it
-                if hasattr(core, 'merge'):
-                    merged_list.extend(core.merge(offset=site_num%2))
-                else:
-                    merged_list.append(core)
-
-                site_num += core.core_len()
-
-            # Merge pairs of cores when possible (currently only with
-            # InputSites), making sure to respect the offset for merging.
-            while True:
-                mod_num, site_num = 0, 0
-                combined_list = []
-
-                while mod_num < len(merged_list) - 1:
-                    left_core, right_core = merged_list[mod_num: mod_num+2]
-                    new_core = self.combine(left_core, right_core,
-                                                       merging=True)
-
-                    # If cores aren't combinable, move our sliding window by 1
-                    if new_core is None or offset != site_num % 2:
-                        combined_list.append(left_core)
-                        mod_num += 1
-                        site_num += left_core.core_len()
-
-                    # If we get something new, move to the next distinct pair
-                    else:
-                        assert new_core.core_len() == left_core.core_len() + \
-                                                      right_core.core_len()
-                        combined_list.append(new_core)
-                        mod_num += 2
-                        site_num += new_core.core_len()
-
-                    # Add the last core if there's nothing to merge it with
-                    if mod_num == len(merged_list)-1:
-                        combined_list.append(merged_list[mod_num])
-                        mod_num += 1
-
-                # We're finished when unmerged_list remains unchanged
-                if len(combined_list) == len(merged_list):
-                    break
-                else:
-                    merged_list = combined_list
-
-            # Finally, update the appropriate merged module list
-            list_name = f"module_list_{offset}"
-            # If the merged module list hasn't been set yet, initialize it
-            if not hasattr(self, list_name):
-                setattr(self, list_name, nn.ModuleList(merged_list))
-
-            # Otherwise, do an in-place update so that all tensors remain
-            # properly registered with whatever optimizer we use
+            # Apply internal merging routine if our core supports it
+            if hasattr(core, 'merge'):
+                merged_list.extend(core.merge(offset=site_num%2))
             else:
-                module_list = getattr(self, list_name)
-                assert len(module_list) == len(merged_list)
-                for i in range(len(module_list)):
-                    assert module_list[i].tensor.shape == \
-                           merged_list[i].tensor.shape
-                    module_list[i].tensor[:] = merged_list[i].tensor
+                merged_list.append(core)
 
+            site_num += core.core_len()
+
+        # Merge pairs of cores when possible (currently only with
+        # InputSites), making sure to respect the offset for merging.
+        while True:
+            mod_num, site_num = 0, 0
+            combined_list = []
+
+            while mod_num < len(merged_list) - 1:
+                left_core, right_core = merged_list[mod_num: mod_num+2]
+                new_core = self.combine(left_core, right_core,
+                                                   merging=True)
+
+                # If cores aren't combinable, move our sliding window by 1
+                if new_core is None or offset != site_num % 2:
+                    combined_list.append(left_core)
+                    mod_num += 1
+                    site_num += left_core.core_len()
+
+                # If we get something new, move to the next distinct pair
+                else:
+                    assert new_core.core_len() == left_core.core_len() + \
+                                                  right_core.core_len()
+                    combined_list.append(new_core)
+                    mod_num += 2
+                    site_num += new_core.core_len()
+
+                # Add the last core if there's nothing to merge it with
+                if mod_num == len(merged_list)-1:
+                    combined_list.append(merged_list[mod_num])
+                    mod_num += 1
+
+            # We're finished when unmerged_list remains unchanged
+            if len(combined_list) == len(merged_list):
+                break
+            else:
+                merged_list = combined_list
+
+        # Finally, update the appropriate merged module list
+        list_name = f"module_list_{offset}"
+        # If the merged module list hasn't been set yet, initialize it
+        if not hasattr(self, list_name):
+            setattr(self, list_name, nn.ModuleList(merged_list))
+
+        # Otherwise, do an in-place update so that all tensors remain
+        # properly registered with whatever optimizer we use
+        else:
+            module_list = getattr(self, list_name)
+            assert len(module_list) == len(merged_list)
+            for i in range(len(module_list)):
+                assert module_list[i].tensor.shape == \
+                       merged_list[i].tensor.shape
+                module_list[i].tensor[:] = merged_list[i].tensor
+
+    @torch.no_grad()
     def unmerge(self, cutoff=1e-10):
         """
         Convert merged modules to unmerged counterparts
@@ -554,74 +566,73 @@ class MergedLinearRegion(LinearRegion):
         This proceeds by first unmerging all merged cores internally, then
         combining lone cores where possible
         """
-        with torch.no_grad():
-            list_name = f"module_list_{self.offset}"
-            merged_list = getattr(self, list_name)
+        list_name = f"module_list_{self.offset}"
+        merged_list = getattr(self, list_name)
 
-            # Unmerge each core internally and add results to unmerged_list
-            unmerged_list, bond_list, sv_list = [], [-1], [-1]
-            for core in merged_list:
+        # Unmerge each core internally and add results to unmerged_list
+        unmerged_list, bond_list, sv_list = [], [-1], [-1]
+        for core in merged_list:
 
-                # Apply internal unmerging routine if our core supports it
-                if hasattr(core, 'unmerge'):
-                    new_cores, new_bonds, new_svs = core.unmerge(cutoff)
-                    unmerged_list.extend(new_cores)
-                    bond_list.extend(new_bonds[1:])
-                    sv_list.extend(new_svs[1:])
+            # Apply internal unmerging routine if our core supports it
+            if hasattr(core, 'unmerge'):
+                new_cores, new_bonds, new_svs = core.unmerge(cutoff)
+                unmerged_list.extend(new_cores)
+                bond_list.extend(new_bonds[1:])
+                sv_list.extend(new_svs[1:])
+            else:
+                assert not isinstance(core, InputRegion)
+                unmerged_list.append(core)
+                bond_list.append(-1)
+                sv_list.append(-1)
+
+        # Combine all combinable pairs of cores. This occurs in several
+        # passes, and for now acts nontrivially only on InputSite instances
+        while True:
+            mod_num = 0
+            combined_list = []
+
+            while mod_num < len(unmerged_list) - 1:
+                left_core, right_core = unmerged_list[mod_num: mod_num+2]
+                new_core = self.combine(left_core, right_core,
+                                                   merging=False)
+
+                # If cores aren't combinable, move our sliding window by 1
+                if new_core is None:
+                    combined_list.append(left_core)
+                    mod_num += 1
+
+                # If we get something new, move to the next distinct pair
                 else:
-                    assert not isinstance(core, InputRegion)
-                    unmerged_list.append(core)
-                    bond_list.append(-1)
-                    sv_list.append(-1)
+                    combined_list.append(new_core)
+                    mod_num += 2
 
-            # Combine all combinable pairs of cores. This occurs in several
-            # passes, and for now acts nontrivially only on InputSite instances
-            while True:
-                mod_num = 0
-                combined_list = []
+                # Add the last core if there's nothing to combine it with
+                if mod_num == len(unmerged_list)-1:
+                    combined_list.append(unmerged_list[mod_num])
+                    mod_num += 1
 
-                while mod_num < len(unmerged_list) - 1:
-                    left_core, right_core = unmerged_list[mod_num: mod_num+2]
-                    new_core = self.combine(left_core, right_core,
-                                                       merging=False)
+            # We're finished when unmerged_list remains unchanged
+            if len(combined_list) == len(unmerged_list):
+                break
+            else:
+                unmerged_list = combined_list
 
-                    # If cores aren't combinable, move our sliding window by 1
-                    if new_core is None:
-                        combined_list.append(left_core)
-                        mod_num += 1
+        # Find the average (log) norm of all of our cores
+        log_norms = []
+        for core in unmerged_list:
+            log_norms.append([torch.log(norm) for norm in core.get_norm()])
+        log_scale = sum([sum(ns) for ns in log_norms])
+        log_scale /= sum([len(ns) for ns in log_norms])
 
-                    # If we get something new, move to the next distinct pair
-                    else:
-                        combined_list.append(new_core)
-                        mod_num += 2
+        # Now rescale all cores so that their norms are roughly equal
+        scales = [[torch.exp(log_scale-n) for n in ns] for ns in log_norms]
+        for core, these_scales in zip(unmerged_list, scales):
+            core.rescale_norm(these_scales)
 
-                    # Add the last core if there's nothing to combine it with
-                    if mod_num == len(unmerged_list)-1:
-                        combined_list.append(unmerged_list[mod_num])
-                        mod_num += 1
-
-                # We're finished when unmerged_list remains unchanged
-                if len(combined_list) == len(unmerged_list):
-                    break
-                else:
-                    unmerged_list = combined_list
-
-            # Find the average (log) norm of all of our cores
-            log_norms = []
-            for core in unmerged_list:
-                log_norms.append([torch.log(norm) for norm in core.get_norm()])
-            log_scale = sum([sum(ns) for ns in log_norms])
-            log_scale /= sum([len(ns) for ns in log_norms])
-
-            # Now rescale all cores so that their norms are roughly equal
-            scales = [[torch.exp(log_scale-n) for n in ns] for ns in log_norms]
-            for core, these_scales in zip(unmerged_list, scales):
-                core.rescale_norm(these_scales)
-
-            # Add our unmerged module list as a new attribute and return
-            # the updated bond dimensions
-            self.module_list = nn.ModuleList(unmerged_list)
-            return bond_list, sv_list
+        # Add our unmerged module list as a new attribute and return
+        # the updated bond dimensions
+        self.module_list = nn.ModuleList(unmerged_list)
+        return bond_list, sv_list
 
     def combine(self, left_core, right_core, merging):
         """
@@ -695,7 +706,8 @@ class InputRegion(nn.Module):
         if ephemeral:
             self.register_buffer(name='tensor', tensor=tensor.contiguous())
         else:
-            self.register_parameter(name='tensor', tensor=tensor.contiguous())
+            self.register_parameter(name='tensor', 
+                                    param=nn.Parameter(tensor.contiguous()))
         
         self.resnet_style = resnet_style
 
@@ -780,6 +792,7 @@ class InputRegion(nn.Module):
         """
         return [torch.norm(core) for core in self.tensor]
 
+    @torch.no_grad()
     def rescale_norm(self, scale_list):
         """
         Rescales the norm of each core by an amount specified in scale_list
@@ -789,9 +802,8 @@ class InputRegion(nn.Module):
         """
         assert len(scale_list) == len(self.tensor)
 
-        with torch.no_grad():
-            for core, scale in zip(self.tensor, scale_list):
-                core *= scale
+        for core, scale in zip(self.tensor, scale_list):
+            core *= scale
 
     def core_len(self):
         return len(self)
@@ -817,7 +829,8 @@ class MergedInput(nn.Module):
         super().__init__()
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor.contiguous())
+        self.register_parameter(name='tensor', 
+                                param=nn.Parameter(tensor.contiguous()))
 
     def forward(self, input_data):
         """
@@ -878,6 +891,7 @@ class MergedInput(nn.Module):
         """
         return [torch.norm(core) for core in self.tensor]
 
+    @torch.no_grad()
     def rescale_norm(self, scale_list):
         """
         Rescales the norm of each core by an amount specified in scale_list
@@ -887,9 +901,8 @@ class MergedInput(nn.Module):
         """
         assert len(scale_list) == len(self.tensor)
 
-        with torch.no_grad():
-            for core, scale in zip(self.tensor, scale_list):
-                core *= scale
+        for core, scale in zip(self.tensor, scale_list):
+            core *= scale
 
     def core_len(self):
         return len(self)
@@ -907,7 +920,8 @@ class InputSite(nn.Module):
     def __init__(self, tensor):
         super().__init__()
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor.contiguous())
+        self.register_parameter(name='tensor', 
+                                param=nn.Parameter(tensor.contiguous()))
 
     def forward(self, input_data):
         """
@@ -932,16 +946,16 @@ class InputSite(nn.Module):
         """
         return [torch.norm(self.tensor)]
 
+    @torch.no_grad()
     def rescale_norm(self, scale):
         """
         Rescales the norm of our core by a factor of input `scale`
         """
-        with torch.no_grad():
-            if isinstance(scale, list):
-                assert len(scale) == 1
-                scale = scale[0]
+        if isinstance(scale, list):
+            assert len(scale) == 1
+            scale = scale[0]
 
-            self.tensor *= scale
+        self.tensor *= scale
 
     def core_len(self):
         return 1
@@ -956,7 +970,8 @@ class OutputSite(nn.Module):
     def __init__(self, tensor):
         super().__init__()
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor.contiguous())
+        self.register_parameter(name='tensor', 
+                                param=nn.Parameter(tensor.contiguous()))
 
     def forward(self, input_data):
         """
@@ -970,16 +985,16 @@ class OutputSite(nn.Module):
         """
         return [torch.norm(self.tensor)]
 
+    @torch.no_grad()
     def rescale_norm(self, scale):
         """
         Rescales the norm of our core by a factor of input `scale`
         """
-        with torch.no_grad():
-            if isinstance(scale, list):
-                assert len(scale) == 1
-                scale = scale[0]
+        if isinstance(scale, list):
+            assert len(scale) == 1
+            scale = scale[0]
 
-            self.tensor *= scale
+        self.tensor *= scale
 
     def core_len(self):
         return 1
@@ -1006,7 +1021,8 @@ class MergedOutput(nn.Module):
         super().__init__()
 
         # Register our tensor as a Pytorch Parameter
-        self.tensor = nn.Parameter(tensor.contiguous())
+        self.register_parameter(name='tensor', 
+                                param=nn.Parameter(tensor.contiguous()))
         self.left_output = left_output
 
     def forward(self, input_data):
@@ -1063,16 +1079,16 @@ class MergedOutput(nn.Module):
         """
         return [torch.norm(self.tensor)]
 
+    @torch.no_grad()
     def rescale_norm(self, scale):
         """
         Rescales the norm of our core by a factor of input `scale`
         """
-        with torch.no_grad():
-            if isinstance(scale, list):
-                assert len(scale) == 1
-                scale = scale[0]
+        if isinstance(scale, list):
+            assert len(scale) == 1
+            scale = scale[0]
 
-            self.tensor *= scale
+        self.tensor *= scale
 
     def core_len(self):
         return 2
@@ -1080,22 +1096,39 @@ class MergedOutput(nn.Module):
     def __len__(self):
         return 1
 
-class FixedVector(nn.Module):
+class InitialVector(nn.Module):
     """
-    Fixed all-ones vector to act as beginning or end of MPS
+    Vector of ones and zeros to act as initial vector within the MPS
+
+    By default the initial vector is chosen to be all ones, but if fill_dim is
+    specified then only the first fill_dim entries are set to one, with the
+    rest zero.
+
+    If fixed_vec is False, then the initial vector will be registered as a 
+    trainable model parameter.
     """
-    def __init__(self, bond_dim, is_left_vec=True):
+    def __init__(self, bond_dim, fill_dim=None, fixed_vec=True, 
+                 is_left_vec=True):
         super().__init__()
 
         vec = torch.ones(bond_dim)
-        vec.requires_grad = False
-        self.register_buffer(name='vec', tensor=vec)
+        if fill_dim is not None:
+            assert fill_dim >= 0 and fill_dim <= bond_dim
+            vec[fill_dim:] = 0
 
+        if fixed_vec:
+            vec.requires_grad = False
+            self.register_buffer(name='vec', tensor=vec)
+        else:
+            vec.requires_grad = True
+            self.register_parameter(name='vec', param=nn.Parameter(vec))
+        
+        assert isinstance(is_left_vec, bool)
         self.is_left_vec = is_left_vec
 
     def forward(self):
         """
-        Return our fixed vector wrapped as an EdgeVec contractable
+        Return our initial vector wrapped as an EdgeVec contractable
         """
         return EdgeVec(self.vec, self.is_left_vec)
 
@@ -1105,27 +1138,37 @@ class FixedVector(nn.Module):
     def __len__(self):
         return 0
 
-class FixedOutput(nn.Module):
+class TerminalOutput(nn.Module):
     """
-    Fixed output matrix to transmute virtual state of MPS into output vector
+    Output matrix at end of chain to transmute virtual state into output vector
+
+    By default, a fixed rectangular identity matrix with shape 
+    [bond_dim, output_dim] will be used as a state transducer. If fixed_mat is
+    False, then the matrix will be registered as a trainable model parameter. 
     """
-    def __init__(self, bond_dim, output_dim, is_left_mat=False):
+    def __init__(self, bond_dim, output_dim, fixed_mat=True,
+                 is_left_mat=False):
         super().__init__()
 
         if output_dim > bond_dim:
-            raise ValueError("FixedOutput core currently only supports case of"
-                             "bond_dim >= output_dim, but here bond_dim="
+            raise ValueError("TerminalOutput core currently only supports case"
+                             " of bond_dim >= output_dim, but here bond_dim="
                             f"{bond_dim} and output_dim={output_dim}")
-
         mat = torch.eye(bond_dim, output_dim)
-        mat.requires_grad = False
-        self.register_buffer(name='mat', tensor=mat)
 
+        if fixed_mat:
+            mat.requires_grad = False
+            self.register_buffer(name='mat', tensor=mat)
+        else:
+            mat.requires_grad = True
+            self.register_parameter(name='mat', param=nn.Parameter(mat))
+
+        assert isinstance(is_left_mat, bool)
         self.is_left_mat = is_left_mat
 
     def forward(self):
         """
-        Return our fixed matrix wrapped as an OutputMat contractable
+        Return our terminal matrix wrapped as an OutputMat contractable
         """
         return OutputMat(self.mat, self.is_left_mat)
 
