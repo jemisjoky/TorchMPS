@@ -1,11 +1,8 @@
 """
 TODO:
-
-    (1) Allow TerminalMat to deal with case of output_dim > bond_dim, through some type of isometric layout of the classification vectors
-    [NOTE: Perhaps an "isometric tight frame" is the right construction, whose explicit construction is given in https://www.semanticscholar.org/paper/ISOMETRIC-TIGHT-FRAMES-Reams-Waldron/9199c3eb5bfe93b19d17d92c0a9f2cacbe02a9ad]
-
-    (2) Revisit my earlier idea for refactoring my code to simplify a bunch of nuisance classes.
+    (1) Update master to include all the new features in dynamic_capacity
 """
+import math
 import torch
 import torch.nn as nn
 from utils import init_tensor, svd_flex
@@ -16,8 +13,9 @@ class TI_MPS(nn.Module):
     """
     Sequence MPS which converts input of arbitrary length to a single output vector
     """
-    def __init__(self, feature_dim, output_dim, bond_dim, parallel_eval=False,
-                 fixed_ends=False, init_std=1e-9):
+    def __init__(self, output_dim, bond_dim, feature_dim=2, 
+                 parallel_eval=False, fixed_ends=False, init_std=1e-9, 
+                 use_bias=True, fixed_bias=True):
         super().__init__()
 
         # Initialize the core tensor defining our model near the identity
@@ -34,29 +32,48 @@ class TI_MPS(nn.Module):
         self.terminal_mat = TerminalOutput(bond_dim, output_dim, 
                                            fixed_mat=fixed_ends)
 
+        # Set the bias matrix
+        if use_bias:
+            # bias_mat is identity when fixed_bias=True, near-identity otherwise
+            if fixed_bias:
+                bias_mat = torch.eye(bond_dim)
+                self.register_buffer(name='bias_mat', tensor=bias_mat)
+            else:
+                bias_mat = init_tensor(bond_str='lr', shape=[bond_dim, bond_dim],
+                                       init_method=('random_eye', init_std))
+                self.register_parameter(name='bias_mat', 
+                                        param=nn.Parameter(bias_mat))
+        else:
+            self.bias_mat = None
+
+        # Set the rest of our TI_MPS attributes
         self.feature_dim = feature_dim
         self.output_dim = output_dim
         self.bond_dim = bond_dim
         self.parallel_eval = parallel_eval
+        self.use_bias = use_bias
+        self.fixed_bias = fixed_bias
+        self.feature_map = None
 
     def forward(self, input_data):
         """
-        Takes batch tensor or list of inputs and return a batch tensor or list of outputs
+        Converts batch input tensor into a batch output tensor
 
         Args:
-            input_data: Either a tensor of shape [batch_size, length, feature_dim], 
-            or a list of length batch_size, whose i'th item is a matrix of shape 
-            [length_i, feature_dim].
+            input_data: A tensor of shape [batch_size, length, feature_dim].
         """
+
         # Reformat our input to a batch format, padding with zeros as needed
-        batch_input = self.collate_input(input_data)
+        batch_input = self.format_input(input_data)
         batch_size = batch_input.size(0)
         seq_len = batch_input.size(1)
 
         # Build up a contractable_list as EdgeVec + MatRegion + OutputMat
         expanded_core = self.core_tensor.expand([seq_len, 
                           self.bond_dim, self.bond_dim, self.feature_dim])
-        input_region = InputRegion(expanded_core, ephemeral=True)
+        input_region = InputRegion(expanded_core, use_bias=self.use_bias, 
+                                   fixed_bias=self.fixed_bias, 
+                                   bias_mat=self.bias_mat, ephemeral=True)
         contractable_list = [input_region(batch_input)]
 
         # Prepend an EdgeVec and append an OutputMat
@@ -77,46 +94,147 @@ class TI_MPS(nn.Module):
 
         return batch_output
 
-    def collate_input(self, input_data):
+    def format_input(self, input_data):
         """
         Converts input list of sequences into a single batch sequence tensor.
 
         If input is already a batch tensor, it is returned unchanged. Otherwise,
-        convert input list into a batch sequence with length equal to the 
-        longest input sequence. Shorter sequences are padded at end with zeros.
+        convert input list into a batch sequence with shape [batch_size, length, 
+        feature_dim].
+
+        If self.use_bias = self.fixed_bias = True, then sequences of different
+        lengths can be used, in which case shorter sequences are padded with 
+        zeros at the end, making the batch tensor length equal to the length
+        of the longest input sequence.
 
         Args:
-            input_data: Either a tensor of shape [batch_size, length, feature_dim], 
-            or a list of length batch_size, whose i'th item is a matrix of shape 
-            [length_i, feature_dim].
+            input_data: A tensor of shape [batch_size, length] or 
+            [batch_size, length, feature_dim], or a list of length batch_size, 
+            whose i'th item is a tensor of shape [length_i, feature_dim] or 
+            [length_i]. If self.use_bias or self.fixed_bias are False, then 
+            length_i must be the same for all i. 
         """
-        # If we already have a batch tensor, just return it after making checks
+        feature_dim = self.feature_dim
+
+        # If we get a batch tensor, just embed it and/or return it unchanged
         if isinstance(input_data, torch.Tensor):
+            if len(input_data.shape) == 2:
+                input_data = self.embed_input(input_data)
+
+            # Check to make sure shape is alright
             shape = input_data.shape
             assert len(shape) == 3
-            assert shape[2] == self.feature_dim
-            batch_size = shape[0]
+            assert shape[2] == feature_dim
 
             return input_data
 
+        # Collate the input list into a single batch tensor
         elif isinstance(input_data, list):
-            batch_size = len(input_data)
-            max_len = max([input_seq.size(0) for input_seq in input_data])
+            # Check formatting, require that input sequences are either all
+            # unembedded or all pre-embedded
+            num_modes = len(input_data[0].shape)
+            assert num_modes in [1, 2]
+            assert all([isinstance(s, torch.Tensor) and 
+                        len(s.shape) == num_modes for s in input_data])
+            assert num_modes == 1 or all([s.size(1) == feature_dim 
+                                          for s in input_data])
 
-            batch_input = torch.zeros([batch_size, max_len, self.feature_dim])
-            for i, input_seq in enumerate(input_data):
-                shape = input_seq.shape
-                assert len(shape) == 2
-                assert shape[1] == self.feature_dim
+            # Check that all the sequences are the same length or can be padded
+            max_len = max([s.size(0) for s in input_data])
+            can_pad = self.use_bias and self.fixed_bias
+            if not can_pad and any([s.size(0) != max_len for s in input_data]):
+                raise ValueError("To process input_data as list of sequences "
+                      "with different lengths, must have self.use_bias="
+                      "self.fixed_bias=True (currently self.use_bias="
+                     f"{self.use_bias}, self.fixed_bias={self.fixed_bias})")
 
-                # Copy this sequence into batch_input
-                batch_input[i, :shape[0]] = input_seq
+            # Pad the sequences with zeros (if needed), return as batch tensor
+            if can_pad:
+                batch_size = len(input_data)
+                full_size = [batch_size, max_len, feature_dim]
+                batch_input = torch.zeros(full_size[:num_modes+1])
+                
+                # Copy each sequence into batch_input
+                for i, seq in enumerate(input_data):
+                    batch_input[i, :seq.size(0)] = seq
+            else:
+                batch_input = torch.stack(input_data)
 
+            # Embed everything (if needed) and return the batch tensor
+            if len(batch_input.shape) == 2:
+                batch_input = self.embed_input(batch_input)
+            
             return batch_input
+
         else:
             raise ValueError("input_data must either be Tensor with shape"
-                             "[batch_size, length, feature_dim], or list of"
-                             "Tensors with shapes [length_i, feature_dim]")
+                  "[batch_size, length] or [batch_size, length, feature_dim], "
+                  "or list of Tensors with shapes [length_i, feature_dim] or "
+                  "[length_i]")
+
+    def embed_input(self, input_data):
+        """
+        Embed pixels of input_data into separate local feature spaces
+
+        Args:
+            input_data (Tensor):    Input with shape [batch_size, length].
+
+        Returns:
+            embedded_data (Tensor): Input embedded into a tensor with shape
+                                    [batch_size, input_dim, feature_dim]
+        """
+        assert len(input_data.shape) == 2
+
+        # Get relevant dimensions
+        batch_dim, length = input_data.shape
+        feature_dim = self.feature_dim
+        embedded_shape = [batch_dim, length, feature_dim]
+
+        # Apply a custom embedding map if it has been defined by the user
+        if self.feature_map is not None:
+            f_map = self.feature_map
+            embedded_data = torch.stack([torch.stack([f_map(x) for x in batch])
+                                                      for batch in input_data])
+
+            # Make sure our embedded input has the desired size
+            assert list(embedded_data.shape) == embedded_shape
+
+        # Otherwise, use a simple linear embedding map with feature_dim = 2
+        else:
+            if self.feature_dim != 2:
+                raise RuntimeError(f"self.feature_dim = {feature_dim}, but "
+                      "default feature_map requires self.feature_dim = 2")
+            embedded_data = torch.empty(embedded_shape)
+
+            embedded_data[:,:,0] = input_data
+            embedded_data[:,:,1] = 1 - input_data
+
+        return embedded_data
+
+    def register_feature_map(self, feature_map):
+        """
+        Register a custom feature map to be used for embedding input data
+
+        Args:
+            feature_map (function): Takes a single scalar input datum and
+                                    returns an embedded representation of the
+                                    image. The output size of the function must
+                                    match self.feature_dim. If feature_map=None,
+                                    then the feature map will be reset to a
+                                    simple default linear embedding
+        """
+        if feature_map is not None:
+            # Test to make sure feature_map outputs vector of proper size
+            test_out = feature_map(torch.tensor(0))
+            assert isinstance(test_out, torch.Tensor)
+
+            out_shape, needed_shape = list(test_out.shape), [self.feature_dim]
+            if out_shape != needed_shape:
+                raise ValueError("Given feature_map returns values with shape "
+                                f"{list(out_shape)}, but should return "
+                                f"values of size {list(needed_shape)}")
+
+        self.feature_map = feature_map
 
 
 class MPS(nn.Module):
@@ -125,23 +243,32 @@ class MPS(nn.Module):
     """
     def __init__(self, input_dim, output_dim, bond_dim, feature_dim=2,
                  adaptive_mode=False, periodic_bc=False, parallel_eval=False,
-                 label_site=None, path=None, cutoff=1e-10,
-                 merge_threshold=2000, init_std=1e-9):
+                 label_site=None, path=None, init_std=1e-9, use_bias=True,
+                 fixed_bias=True, cutoff=1e-10, merge_threshold=2000):
         super().__init__()
 
         if label_site is None:
             label_site = input_dim // 2
         assert label_site >= 0 and label_site <= input_dim
 
+        # Using bias matrices in adaptive_mode is too complicated, so I'm 
+        # disabling it here
+        if adaptive_mode:
+            use_bias = False
+
         # Our MPS is made of two InputRegions separated by an OutputSite.
         module_list = []
+        init_args = {'bond_str': 'slri',
+                     'shape': [label_site, bond_dim, bond_dim, feature_dim],
+                     'init_method': ('min_random_eye' if adaptive_mode else
+                     'random_zero', init_std, output_dim)}
+
+        # The first input region
         if label_site > 0:
-            tensor = init_tensor(bond_str='slri',
-            shape=[label_site, bond_dim, bond_dim, feature_dim],
-            init_method=('min_random_eye' if adaptive_mode else
-            'random_zero', init_std, output_dim))
-            module_list.append(InputRegion(tensor, 
-                                           resnet_style=(not adaptive_mode)))
+            tensor = init_tensor(**init_args)
+
+            module_list.append(InputRegion(tensor, use_bias=use_bias, 
+                                           fixed_bias=fixed_bias))
 
         # The output site
         tensor = init_tensor(shape=[output_dim, bond_dim, bond_dim],
@@ -151,12 +278,11 @@ class MPS(nn.Module):
 
         # The other input region
         if label_site < input_dim:
-            tensor = init_tensor(bond_str='slri',
-                shape=[input_dim-label_site, bond_dim, bond_dim, feature_dim],
-                init_method=('min_random_eye' if adaptive_mode else
-                             'random_zero', init_std, output_dim))
-            module_list.append(InputRegion(tensor, 
-                                           resnet_style=(not adaptive_mode)))
+            init_args['shape'] = [input_dim-label_site, bond_dim, bond_dim, 
+                                  feature_dim]
+            tensor = init_tensor(**init_args)
+            module_list.append(InputRegion(tensor, use_bias=use_bias, 
+                                           fixed_bias=fixed_bias))
 
         # Initialize linear_region according to our adaptive_mode specification
         if adaptive_mode:
@@ -164,6 +290,16 @@ class MPS(nn.Module):
                                  periodic_bc=periodic_bc,
                                  parallel_eval=parallel_eval, cutoff=cutoff,
                                  merge_threshold=merge_threshold)
+
+            # Initialize the list of bond dimensions, which starts out constant
+            self.bond_list = bond_dim * torch.ones(input_dim + 2, 
+                                                   dtype=torch.long)
+            if not periodic_bc:
+                self.bond_list[0], self.bond_list[-1] = 1, 1
+
+            # Initialize the list of singular values, which start out at -1
+            self.sv_list = -1. * torch.ones([input_dim + 2, bond_dim])
+
         else:
             self.linear_region = LinearRegion(module_list=module_list,
                                  periodic_bc=periodic_bc,
@@ -174,6 +310,7 @@ class MPS(nn.Module):
             assert isinstance(path, (list, torch.Tensor))
             assert len(path) == input_dim
 
+        # Set the rest of our MPS attributes
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.bond_dim = bond_dim
@@ -182,28 +319,28 @@ class MPS(nn.Module):
         self.adaptive_mode = adaptive_mode
         self.label_site = label_site
         self.path = path
+        self.use_bias = use_bias
+        self.fixed_bias = fixed_bias
         self.cutoff = cutoff
         self.merge_threshold = merge_threshold
         self.feature_map = None
-
-        # Initialize the list of bond dimensions, which starts out constant
-        self.bond_list = bond_dim * torch.ones(input_dim + 2, dtype=torch.long)
-        if not periodic_bc:
-            self.bond_list[0], self.bond_list[-1] = 1, 1
-
-        # Initialize the list of singular values, which start out unset (-1)
-        self.sv_list = -1. * torch.ones([input_dim + 2, bond_dim])
 
     def forward(self, input_data):
         """
         Embed our data and pass it to an MPS with a single output site
 
         Args:
-            input_data (Tensor): Input with shape [batch_size, input_dim].
+            input_data (Tensor): Input with shape [batch_size, input_dim] or
+                                 [batch_size, input_dim, feature_dim]. In the
+                                 former case, the data points are turned into
+                                 2D vectors using a default linear feature map.
+                                 
                                  When using a user-specified path, the size of
                                  the second tensor mode need not exactly equal
                                  input_dim, since the path variable is used to
-                                 slice a certain subregion of input_data
+                                 slice a certain subregion of input_data. This
+                                 can be used to define multiple MPS 'strings', 
+                                 which act on different parts of the input. 
         """
         # For custom paths, rearrange our input into the desired order
         if self.path:
@@ -248,7 +385,7 @@ class MPS(nn.Module):
         assert len(input_data.shape) in [2, 3]
         assert input_data.size(1) == self.input_dim
 
-        # If the size matches, simply return pre-embedded inputs
+        # If input already has a feature dimension, return it as is
         if len(input_data.shape) == 3:
             if input_data.size(2) != self.feature_dim:
                 raise ValueError(f"input_data has wrong shape to be unembedded "
@@ -695,22 +832,44 @@ class MergedLinearRegion(LinearRegion):
 
 class InputRegion(nn.Module):
     """
-    Contiguous region of MPS cores taking in multiple input data, bond_str = 'slri'
+    Contiguous region of MPS input cores, associated with bond_str = 'slri'
     """
-    def __init__(self, tensor, resnet_style=True, ephemeral=False):
+    def __init__(self, tensor, use_bias=True, fixed_bias=True, bias_mat=None,
+                 ephemeral=False):
         super().__init__()
-        # Make sure the component matrices are square
-        assert tensor.size(1) == tensor.size(2)
 
-        # Register our tensor, either as a Pytorch Parameter or Tensor
+        # Make sure tensor has correct size and the component mats are square
+        assert len(tensor.shape) == 4
+        assert tensor.size(1) == tensor.size(2)
+        bond_dim = tensor.size(1)
+
+        # If we are using bias matrices, set those up here
+        if use_bias:
+            assert bias_mat is None or isinstance(bias_mat, torch.Tensor)
+            bias_mat = torch.eye(bond_dim).unsqueeze(0) if bias_mat is None \
+                       else bias_mat
+
+            bias_modes = len(list(bias_mat.shape))
+            assert bias_modes in [2, 3]
+            if bias_modes == 2:
+                bias_mat = bias_mat.unsqueeze(0)
+
+        # Register our tensors as a Pytorch Parameter or Tensor
         if ephemeral:
             self.register_buffer(name='tensor', tensor=tensor.contiguous())
+            self.register_buffer(name='bias_mat', tensor=bias_mat)
         else:
             self.register_parameter(name='tensor', 
                                     param=nn.Parameter(tensor.contiguous()))
-        
-        self.resnet_style = resnet_style
+            if fixed_bias:
+                self.register_buffer(name='bias_mat', tensor=bias_mat)
+            else:
+                self.register_parameter(name='bias_mat', 
+                                        param=nn.Parameter(bias_mat))
 
+        self.use_bias = use_bias
+        self.fixed_bias = fixed_bias
+        
     def forward(self, input_data):
         """
         Contract input with MPS cores and return result as a MatRegion
@@ -728,11 +887,11 @@ class InputRegion(nn.Module):
         # Contract the input with our core tensor
         mats = torch.einsum('slri,bsi->bslr', [tensor, input_data])
 
-        # Add an extra identity everywhere for ResNet-style representation
-        if self.resnet_style:
+        # If we're using bias matrices, add those here
+        if self.use_bias:
             bond_dim = tensor.size(1)
-            eye_tensor = torch.eye(bond_dim).view([1, 1, bond_dim, bond_dim])
-            mats = mats + eye_tensor.expand_as(mats)
+            bias_mat = self.bias_mat.unsqueeze(0)
+            mats = mats + bias_mat.expand_as(mats)
 
         return MatRegion(mats)
 
@@ -1146,20 +1305,27 @@ class TerminalOutput(nn.Module):
     [bond_dim, output_dim] will be used as a state transducer. If fixed_mat is
     False, then the matrix will be registered as a trainable model parameter. 
     """
-    def __init__(self, bond_dim, output_dim, fixed_mat=True,
+    def __init__(self, bond_dim, output_dim, fixed_mat=False,
                  is_left_mat=False):
         super().__init__()
 
-        if output_dim > bond_dim:
-            raise ValueError("TerminalOutput core currently only supports case"
-                             " of bond_dim >= output_dim, but here bond_dim="
+        # I don't have a nice initialization scheme for a non-injective fixed
+        # state transducer, so just throw an error if that's needed
+        if fixed_mat and output_dim > bond_dim:
+            raise ValueError("With fixed_mat=True, TerminalOutput currently "
+                             "only supports initialization for bond_dim >= "
+                             "output_dim, but here bond_dim="
                             f"{bond_dim} and output_dim={output_dim}")
-        mat = torch.eye(bond_dim, output_dim)
 
+        # Initialize the matrix and register it appropriately
+        mat = torch.eye(bond_dim, output_dim)
         if fixed_mat:
             mat.requires_grad = False
             self.register_buffer(name='mat', tensor=mat)
         else:
+            # Add some noise to help with training
+            mat = mat + torch.randn_like(mat) / bond_dim
+
             mat.requires_grad = True
             self.register_parameter(name='mat', param=nn.Parameter(mat))
 
@@ -1177,4 +1343,3 @@ class TerminalOutput(nn.Module):
 
     def __len__(self):
         return 0
-

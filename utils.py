@@ -153,16 +153,21 @@ def init_tensor(shape, bond_str, init_method):
     Initialize a tensor with a given shape
 
     Args:
-        shape:       The shape of our output parameter tensor
+        shape:       The shape of our output parameter tensor.
 
         bond_str:    The bond string describing our output parameter tensor,
-                     which is used in 'random_eye' initialization method
+                     which is used in 'random_eye' initialization method.
+                     The characters 'l' and 'r' are used to refer to the
+                     left or right virtual indices of our tensor, and are
+                     both required to be present for the random_eye and
+                     min_random_eye initialization methods.
 
         init_method: The method used to initialize the entries of our tensor.
                      This can be either a string, or else a tuple whose first
                      entry is an initialization method and whose remaining 
                      entries are specific to that method. In each case, std
-                     will always refer to a standard deviation for a random normal random component of each entry of the tensor. 
+                     will always refer to a standard deviation for a random 
+                     normal random component of each entry of the tensor. 
 
                      Allowed options are:
                         * ('random_eye', std): Initialize each tensor input 
@@ -172,7 +177,9 @@ def init_tensor(shape, bond_str, init_method):
                         * ('min_random_eye', std, init_dim): Initialize each 
                             tensor input slice close to a truncated identity 
                             matrix, whose truncation leaves init_dim unit 
-                            entries on the diagonal
+                            entries on the diagonal. If init_dim is larger
+                            than either of the bond dimensions, then init_dim 
+                            is capped at the smaller bond dimension.
     """
     # Unpack init_method if it is a tuple
     if not isinstance(init_method, str):
@@ -197,15 +204,18 @@ def init_tensor(shape, bond_str, init_method):
         assert all([c in bond_str for c in bond_chars])
 
         # Initialize our tensor slices as identity matrices which each fill
-        # either all or some of the initially allocated bond space
+        # some or all of the initially allocated bond space
         if init_method == 'min_random_eye':
-            # If our tensors are big enough, bond dimensions begin at init_dim
+            
+            # The dimensions for our initial identity matrix. These will each 
+            # be init_dim, unless init_dim exceeds one of the bond dimensions
             bond_dims = [shape[bond_str.index(c)] for c in bond_chars]
-            if all([full_dim >= init_dim for full_dim in bond_dims]):
+            if all([init_dim <= full_dim for full_dim in bond_dims]):
                 bond_dims = [init_dim, init_dim]
+            else:
+                init_dim = min(bond_dims)
 
-            eye_shape = [init_dim if c in bond_chars else 1
-                         for i, c in enumerate(bond_str)]
+            eye_shape = [init_dim if c in bond_chars else 1 for c in bond_str]
             expand_shape = [init_dim if c in bond_chars else shape[i]
                             for i, c in enumerate(bond_str)]
 

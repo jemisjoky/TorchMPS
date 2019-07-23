@@ -5,8 +5,8 @@ import sys
 sys.path.append('..')
 from torchmps import MPS
 
-batch_size = 11
-input_size = 21
+batch_size = 3
+input_size = 7
 output_dim = 4
 bond_dim = 5
 merge_threshold = 3 * batch_size
