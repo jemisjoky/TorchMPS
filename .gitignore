@@ -7,3 +7,6 @@ logs/.comet.config
 # MNIST data
 mnist/
 fashion_mnist/
+
+# Sandbox
+sandbox.py

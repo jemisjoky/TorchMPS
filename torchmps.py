@@ -573,8 +573,8 @@ class MergedLinearRegion(LinearRegion):
         # using the unmerged self.module_list, then redefine the latter in
         # terms of one of the former lists
         self.offset = 0
-        self.merge(offset=self.offset)
-        self.merge(offset=(self.offset+1)%2)
+        self._merge(offset=self.offset)
+        self._merge(offset=(self.offset+1)%2)
         self.module_list = getattr(self, f"module_list_{self.offset}")
 
         # Initialize variables used during switching
@@ -596,9 +596,9 @@ class MergedLinearRegion(LinearRegion):
         """
         # If we've hit our threshold, flip the merge state of our tensors
         if self.input_counter >= self.merge_threshold:
-            bond_list, sv_list = self.unmerge(cutoff=self.cutoff)
+            bond_list, sv_list = self._unmerge(cutoff=self.cutoff)
             self.offset = (self.offset + 1) % 2
-            self.merge(offset=self.offset)
+            self._merge(offset=self.offset)
             self.input_counter -= self.merge_threshold
 
             # Point self.module_list to the appropriate merged module
@@ -617,9 +617,12 @@ class MergedLinearRegion(LinearRegion):
             return output
 
     @torch.no_grad()
-    def merge(self, offset):
+    def _merge(self, offset):
         """
         Convert unmerged modules in self.module_list to merged counterparts
+
+        Calling _merge (or _unmerge) directly can cause undefined behavior, 
+        but see MergedLinearRegion.forward for intended use
 
         This proceeds by first merging all unmerged cores internally, then
         merging lone cores when possible during a second sweep
@@ -636,8 +639,8 @@ class MergedLinearRegion(LinearRegion):
             assert not isinstance(core, MergedOutput)
 
             # Apply internal merging routine if our core supports it
-            if hasattr(core, 'merge'):
-                merged_list.extend(core.merge(offset=site_num%2))
+            if hasattr(core, '_merge'):
+                merged_list.extend(core._merge(offset=site_num%2))
             else:
                 merged_list.append(core)
 
@@ -696,9 +699,12 @@ class MergedLinearRegion(LinearRegion):
                 module_list[i].tensor[:] = merged_list[i].tensor
 
     @torch.no_grad()
-    def unmerge(self, cutoff=1e-10):
+    def _unmerge(self, cutoff=1e-10):
         """
         Convert merged modules to unmerged counterparts
+
+        Calling _unmerge (or _merge) directly can cause undefined behavior, 
+        but see MergedLinearRegion.forward for intended use
 
         This proceeds by first unmerging all merged cores internally, then
         combining lone cores where possible
@@ -711,8 +717,8 @@ class MergedLinearRegion(LinearRegion):
         for core in merged_list:
 
             # Apply internal unmerging routine if our core supports it
-            if hasattr(core, 'unmerge'):
-                new_cores, new_bonds, new_svs = core.unmerge(cutoff)
+            if hasattr(core, '_unmerge'):
+                new_cores, new_bonds, new_svs = core._unmerge(cutoff)
                 unmerged_list.extend(new_cores)
                 bond_list.extend(new_bonds[1:])
                 sv_list.extend(new_svs[1:])
@@ -895,7 +901,7 @@ class InputRegion(nn.Module):
 
         return MatRegion(mats)
 
-    def merge(self, offset):
+    def _merge(self, offset):
         """
         Merge all pairs of neighboring cores and return a new list of cores
 
@@ -914,11 +920,11 @@ class InputRegion(nn.Module):
 
         # Simplify the problem into one where offset=0 and num_sites is even
         if (offset, parity) == (1, 1):
-            out_list = [self[0], self[1:].merge(offset=0)[0]]
+            out_list = [self[0], self[1:]._merge(offset=0)[0]]
         elif (offset, parity) == (1, 0):
-            out_list = [self[0], self[1:-1].merge(offset=0)[0], self[-1]]
+            out_list = [self[0], self[1:-1]._merge(offset=0)[0], self[-1]]
         elif (offset, parity) == (0, 1):
-            out_list = [self[:-1].merge(offset=0)[0], self[-1]]
+            out_list = [self[:-1]._merge(offset=0)[0], self[-1]]
 
         # The main case of interest, with no offset and an even number of sites
         else:
@@ -1016,7 +1022,7 @@ class MergedInput(nn.Module):
 
         return MatRegion(mats)
 
-    def unmerge(self, cutoff=1e-10):
+    def _unmerge(self, cutoff=1e-10):
         """
         Separate the cores in our MergedInput and return an InputRegion
 
@@ -1201,7 +1207,7 @@ class MergedOutput(nn.Module):
 
         return OutputCore(tensor)
 
-    def unmerge(self, cutoff=1e-10):
+    def _unmerge(self, cutoff=1e-10):
         """
         Split our MergedOutput into an OutputSite and an InputSite
 
