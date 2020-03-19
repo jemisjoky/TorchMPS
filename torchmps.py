@@ -410,10 +410,8 @@ class MPS(nn.Module):
             if self.feature_dim != 2:
                 raise RuntimeError(f"self.feature_dim = {self.feature_dim}, "
                       "but default feature_map requires self.feature_dim = 2")
-            embedded_data = torch.empty(embedded_shape)
 
-            embedded_data[:,:,0] = input_data
-            embedded_data[:,:,1] = 1 - input_data
+            embedded_data = torch.stack([input_data, 1 - input_data], dim=2)
 
         return embedded_data
 
@@ -488,6 +486,10 @@ class LinearRegion(nn.Module):
         parallel_eval = self.parallel_eval
         lin_bonds = ['l', 'r']
 
+        # Whether to move intermediate vectors to a GPU (fixes Issue #8)
+        to_cuda = input_data.is_cuda
+        device = f'cuda:{input_data.get_device()}' if to_cuda else 'cpu'
+
         # For each module, pull out the number of pixels needed and call that
         # module's forward() method, putting the result in contractable_list
         ind = 0
@@ -536,7 +538,8 @@ class LinearRegion(nn.Module):
                                                zip(end_items, bond_inds)]
 
             # Build dummy end vectors and insert them at the ends of our list
-            end_vecs = [torch.zeros(dim) for dim in bond_dims]
+            end_vecs = [torch.zeros(dim).to(device) for dim in bond_dims]
+
             for vec in end_vecs:
                 vec[0] = 1
             contractable_list.insert(0, EdgeVec(end_vecs[0], is_left_vec=True))
