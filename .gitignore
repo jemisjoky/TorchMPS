@@ -8,5 +8,8 @@ logs/.comet.config
 mnist/
 fashion_mnist/
 
-# Sandbox
+# Mac junk
+*.DS_Store
+
+# Sandbox for messing around
 sandbox.py

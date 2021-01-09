@@ -3,8 +3,11 @@ TODO:
     (1) Update master to include all the new features in dynamic_capacity
 """
 import math
+
 import torch
 import torch.nn as nn
+
+from stensor import stensor
 from utils import init_tensor, svd_flex
 from contractables import SingleMat, MatRegion, OutputCore, ContractableList, \
                           EdgeVec, OutputMat
@@ -239,12 +242,73 @@ class TI_MPS(nn.Module):
 
 class MPS(nn.Module):
     """
-    Matrix product state which converts input into a single output vector
+    Tunable MPS model giving mapping from fixed-size data to output vector
+
+    Model works by first converting each 'pixel' (local data) to feature 
+    vector via a simple embedding, then contracting embeddings with inputs 
+    to each MPS cores. The resulting transition matrices are contracted 
+    together along bond dimensions (i.e. hidden state spaces), with output
+    produced via an uncontracted edge of an additional output core.
+
+    MPS model permits many customizable behaviors, including custom 
+    'routing' of MPS through the input, choice of boundary conditions 
+    (meaning the model can act as a tensor train or a tensor ring), 
+    GPU-friendly parallel evaluation, and an experimental mode to support
+    adaptive choice of bond dimensions based on singular value spectrum.
+
+    Args:
+        input_dim:       Number of 'pixels' in the input to the MPS
+        output_dim:      Size of the vectors output by MPS via output core
+        bond_dim:        Dimension of the 'bonds' connecting adjacent MPS 
+                         cores, which act as hidden state spaces of the 
+                         model. In adaptive mode, bond_dim instead 
+                         specifies the maximum allowed bond dimension
+        feature_dim:     Size of the local feature spaces each pixel is
+                         embedded into (default: 2)
+        periodic_bc:     Whether MPS has periodic boundary conditions (i.e. 
+                         is a tensor ring) or open boundary conditions 
+                         (i.e. is a tensor train) (default: False)
+        parallel_eval:   Whether contraction of tensors is performed in a 
+                         serial or parallel fashion. The former is less 
+                         expensive for open boundary conditions, but 
+                         parallelizes more poorly (default: False)
+        label_site:      Location in the MPS chain where output is placed
+                         (default: input_dim // 2)
+        path:            List specifying a path through the input data
+                         which MPS is 'routed' along. For example, choosing
+                         path=[0, 1, ..., input_dim-1] gives a standard 
+                         in-order traversal (behavior when path=None), while 
+                         path=[0, 2, ..., input_dim-1] specifies an MPS 
+                         accepting input only from even-valued input pixels 
+                         (default: None)
+        init_std:        Size of the Gaussian noise used in default 
+                         near-identity initialization (default: 1e-9)
+        initializer:     Pytorch initializer for custom initialization of
+                         MPS cores, with None specifying default 
+                         near-identity initialization (default: None)
+        use_bias:        Whether to use trainable bias matrices in MPS
+                         cores, which are initialized near the zero matrix
+                         (default: False)
+        adaptive_mode:   Whether MPS is trained with experimental adaptive
+                         bond dimensions selection (default: False)
+        cutoff:          Singular value cutoff controlling bond dimension
+                         adaptive selection (default: 1e-9)
+        merge_threshold: Number of inputs before adaptive MPS shifts its 
+                         merge state once, with two shifts leading to the 
+                         update of all bond dimensions (default: 2000)
+    """
+    """
+    MPS TODOS
+        * Support arbitrary initializers
+        * Clean up the current treatment of initialization
+        * Resolve weirdness with fixed bias and initialization choice
+        * Add function to convert to canonical form
+        * Figure out why model isn't training currently
     """
     def __init__(self, input_dim, output_dim, bond_dim, feature_dim=2,
-                 adaptive_mode=False, periodic_bc=False, parallel_eval=False,
-                 label_site=None, path=None, init_std=1e-9, use_bias=True,
-                 fixed_bias=True, cutoff=1e-10, merge_threshold=2000):
+                 periodic_bc=False, parallel_eval=False, label_site=None, 
+                 path=None, init_std=1e-9, initializer=None, use_bias=True, 
+                 adaptive_mode=False, cutoff=1e-10, merge_threshold=2000):
         super().__init__()
 
         if label_site is None:
@@ -268,7 +332,7 @@ class MPS(nn.Module):
             tensor = init_tensor(**init_args)
 
             module_list.append(InputRegion(tensor, use_bias=use_bias, 
-                                           fixed_bias=fixed_bias))
+                                           fixed_bias=False))
 
         # The output site
         tensor = init_tensor(shape=[output_dim, bond_dim, bond_dim],
@@ -282,7 +346,7 @@ class MPS(nn.Module):
                                   feature_dim]
             tensor = init_tensor(**init_args)
             module_list.append(InputRegion(tensor, use_bias=use_bias, 
-                                           fixed_bias=fixed_bias))
+                                           fixed_bias=False))
 
         # Initialize linear_region according to our adaptive_mode specification
         if adaptive_mode:
@@ -320,7 +384,6 @@ class MPS(nn.Module):
         self.label_site = label_site
         self.path = path
         self.use_bias = use_bias
-        self.fixed_bias = fixed_bias
         self.cutoff = cutoff
         self.merge_threshold = merge_threshold
         self.feature_map = None

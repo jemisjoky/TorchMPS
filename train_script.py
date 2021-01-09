@@ -23,7 +23,8 @@ l2_reg     = 0.
 
 # Initialize the MPS module
 mps = MPS(input_dim=28**2, output_dim=10, bond_dim=bond_dim, 
-          adaptive_mode=adaptive_mode, periodic_bc=periodic_bc)
+          adaptive_mode=adaptive_mode, periodic_bc=periodic_bc, 
+          use_bias=False)
 
 # Set our loss function and optimizer
 loss_fun = torch.nn.CrossEntropyLoss()
