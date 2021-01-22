@@ -13,8 +13,9 @@
 # All configuration values have a default; values that are commented out
 # serve to show the default.
 
-import sys
 import os
+import sys
+import datetime
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -34,7 +35,7 @@ extensions = [
     'sphinx.ext.doctest',
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
-    'm2r',  # Markdown rendering
+    'm2r2',  # Markdown rendering
     # 'recommonmark',
 ]
 
@@ -55,8 +56,9 @@ source_suffix = ['.md', '.rst']
 master_doc = 'index'
 
 # General information about the project.
+year = datetime.datetime.today().year
 project = 'TorchMPS'
-copyright = '2019, Jacob Miller'
+copyright = f'{year}, Jacob Miller'
 author = 'Jacob Miller'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -117,7 +119,7 @@ todo_include_todos = False
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
-html_theme = 'alabaster'
+html_theme = 'classic'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -181,7 +183,7 @@ html_static_path = ['_static']
 #html_show_sourcelink = True
 
 # If true, "Created using Sphinx" is shown in the HTML footer. Default is True.
-#html_show_sphinx = True
+html_show_sphinx = False
 
 # If true, "(C) Copyright ..." is shown in the HTML footer. Default is True.
 #html_show_copyright = True

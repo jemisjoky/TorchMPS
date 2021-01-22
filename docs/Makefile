@@ -5,8 +5,7 @@
 SPHINXOPTS    =
 SPHINXBUILD   = sphinx-build
 PAPER         =
-#BUILDDIR      = _build
-BUILDDIR      = ../../torch_mps_site
+BUILDDIR      = _build
 PDFBUILDDIR   = /tmp
 PDF           = ../manual.pdf
 
