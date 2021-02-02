@@ -11,5 +11,8 @@ fashion_mnist/
 # Mac junk
 *.DS_Store
 
-# Sandbox for messing around
+# Sandbox for random things
 sandbox.py
+
+# Local build file for doc pages
+docs/_build/
