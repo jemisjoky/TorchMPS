@@ -303,7 +303,7 @@ class MPS(nn.Module):
         * Clean up the current treatment of initialization
         * Resolve weirdness with fixed bias and initialization choice
         * Add function to convert to canonical form
-        * Figure out why model isn't training currently
+        * Fix issue of no training when use_bias=False  
     """
     def __init__(self, input_dim, output_dim, bond_dim, feature_dim=2,
                  periodic_bc=False, parallel_eval=False, label_site=None, 
