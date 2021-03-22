@@ -9,27 +9,27 @@ import matplotlib.pyplot as plt
 
 # Plot all records satisfying the specifications in given in record_spec
 if len(sys.argv) == 2:
-    record_spec = {'experiment_name': sys.argv[1].upper()}
+    record_spec = {"experiment_name": sys.argv[1].upper()}
 else:
     # record_spec = {'dynamic_mode': 1, 'periodic_bc': 1}
-    record_spec = {'experiment_name': 'base_random'.upper()}
+    record_spec = {"experiment_name": "base_random".upper()}
 
 # Parameters that that are varied in our plot (choose at most two)
-plot_params = ['lr', 'init_std']
+plot_params = ["lr", "init_std"]
 assert len(plot_params) in [1, 2]
 
 # Name of output variable we want to plot
-output_var = 'train_acc'
+output_var = "train_acc"
 # Range of values for output_var (values outside this are considered outliers)
 output_range = [0, 1]
 # Output value we assign to broken/unstable trials
-error_val = -1/3
+error_val = -1 / 3
 
 # Specifies if we want log axes, one for each parameter in plot_params
 log_axes = [True, True]
 
 # Type of plot. The following plots are available: 'tricontourf'
-plot_type = 'tricontourf'
+plot_type = "tricontourf"
 
 ### FILE INFORMATION ###
 
@@ -38,15 +38,20 @@ csv_file = "logs/+data.csv"
 
 ### THE FOLLOWING MAKES THE PLOTS, DON'T CUSTOMIZE ###
 
-pretty_names = {'lr': 'Learning rate', 'init_std': 'Initialization scale',
-                'l2_reg': 'L2 regularization', 'bond_dim': 'Bond dimension', 
-                'loss': 'Crossentropy loss', 'train_acc': 'Training accuracy', 
-                'test_acc': 'Testing accuracy'}
+pretty_names = {
+    "lr": "Learning rate",
+    "init_std": "Initialization scale",
+    "l2_reg": "L2 regularization",
+    "bond_dim": "Bond dimension",
+    "loss": "Crossentropy loss",
+    "train_acc": "Training accuracy",
+    "test_acc": "Testing accuracy",
+}
 
 # Convert our CSV file into a list of parameter-keyed dicts
 all_records = []
-with open(csv_file, 'r') as file:
-    reader = csv.reader(file, delimiter=',')
+with open(csv_file, "r") as file:
+    reader = csv.reader(file, delimiter=",")
     for line_num, line in enumerate(reader):
         line = [field.strip() for field in line]
 
@@ -78,28 +83,32 @@ for record in all_records:
             output = output_range[1]
         data[-1].append(output)
 
-if plot_type == 'tricontourf':
+if plot_type == "tricontourf":
 
     # Rescale the data to log scale where needed
-    for i, stream in enumerate(data[:len(plot_params)]):
+    for i, stream in enumerate(data[: len(plot_params)]):
         if log_axes[i]:
             data[i] = np.log10(stream)
 
     # Plot the actual data and markers
     plt.tricontourf(*data)
     plt.colorbar()
-    plt.plot(*data[:2], 'ko', ms=5)
+    plt.plot(*data[:2], "ko", ms=5)
 
     # Add title...
-    experiment_note = f"{record_spec['experiment_name']}, " \
-                      if 'experiment_name' in record_spec else ""
+    experiment_note = (
+        f"{record_spec['experiment_name']}, "
+        if "experiment_name" in record_spec
+        else ""
+    )
     plt.title(experiment_note + pretty_names[output_var])
 
     # ...and axis labels
     log_note = " (log10 scale)"
     axis_labels = [pretty_names[param] for param in plot_params]
-    x_name, y_name = [name + log_note if log else '' for name, log in 
-                      zip(axis_labels, log_axes)]
+    x_name, y_name = [
+        name + log_note if log else "" for name, log in zip(axis_labels, log_axes)
+    ]
     plt.xlabel(x_name)
     plt.ylabel(y_name)
 

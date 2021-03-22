@@ -9,43 +9,62 @@ import torch.nn as nn
 
 from stensor import stensor
 from utils import init_tensor, svd_flex
-from contractables import SingleMat, MatRegion, OutputCore, ContractableList, \
-                          EdgeVec, OutputMat
+from contractables import (
+    SingleMat,
+    MatRegion,
+    OutputCore,
+    ContractableList,
+    EdgeVec,
+    OutputMat,
+)
+
 
 class TI_MPS(nn.Module):
     """
     Sequence MPS which converts input of arbitrary length to a single output vector
     """
-    def __init__(self, output_dim, bond_dim, feature_dim=2, 
-                 parallel_eval=False, fixed_ends=False, init_std=1e-9, 
-                 use_bias=True, fixed_bias=True):
+
+    def __init__(
+        self,
+        output_dim,
+        bond_dim,
+        feature_dim=2,
+        parallel_eval=False,
+        fixed_ends=False,
+        init_std=1e-9,
+        use_bias=True,
+        fixed_bias=True,
+    ):
         super().__init__()
 
         # Initialize the core tensor defining our model near the identity
         # This tensor holds all of the trainable parameters of our model
-        tensor = init_tensor(bond_str='lri', 
-                             shape=[bond_dim, bond_dim, feature_dim], 
-                             init_method=('random_zero', init_std))
-        self.register_parameter(name='core_tensor', param=nn.Parameter(tensor))
+        tensor = init_tensor(
+            bond_str="lri",
+            shape=[bond_dim, bond_dim, feature_dim],
+            init_method=("random_zero", init_std),
+        )
+        self.register_parameter(name="core_tensor", param=nn.Parameter(tensor))
 
-        # Define our initial vector and terminal matrix, which are both 
+        # Define our initial vector and terminal matrix, which are both
         # functional modules, i.e. unchanged during training
         assert isinstance(fixed_ends, bool)
         self.init_vector = InitialVector(bond_dim, fixed_vec=fixed_ends)
-        self.terminal_mat = TerminalOutput(bond_dim, output_dim, 
-                                           fixed_mat=fixed_ends)
+        self.terminal_mat = TerminalOutput(bond_dim, output_dim, fixed_mat=fixed_ends)
 
         # Set the bias matrix
         if use_bias:
             # bias_mat is identity when fixed_bias=True, near-identity otherwise
             if fixed_bias:
                 bias_mat = torch.eye(bond_dim)
-                self.register_buffer(name='bias_mat', tensor=bias_mat)
+                self.register_buffer(name="bias_mat", tensor=bias_mat)
             else:
-                bias_mat = init_tensor(bond_str='lr', shape=[bond_dim, bond_dim],
-                                       init_method=('random_eye', init_std))
-                self.register_parameter(name='bias_mat', 
-                                        param=nn.Parameter(bias_mat))
+                bias_mat = init_tensor(
+                    bond_str="lr",
+                    shape=[bond_dim, bond_dim],
+                    init_method=("random_eye", init_std),
+                )
+                self.register_parameter(name="bias_mat", param=nn.Parameter(bias_mat))
         else:
             self.bias_mat = None
 
@@ -72,11 +91,16 @@ class TI_MPS(nn.Module):
         seq_len = batch_input.size(1)
 
         # Build up a contractable_list as EdgeVec + MatRegion + OutputMat
-        expanded_core = self.core_tensor.expand([seq_len, 
-                          self.bond_dim, self.bond_dim, self.feature_dim])
-        input_region = InputRegion(expanded_core, use_bias=self.use_bias, 
-                                   fixed_bias=self.fixed_bias, 
-                                   bias_mat=self.bias_mat, ephemeral=True)
+        expanded_core = self.core_tensor.expand(
+            [seq_len, self.bond_dim, self.bond_dim, self.feature_dim]
+        )
+        input_region = InputRegion(
+            expanded_core,
+            use_bias=self.use_bias,
+            fixed_bias=self.fixed_bias,
+            bias_mat=self.bias_mat,
+            ephemeral=True,
+        )
         contractable_list = [input_region(batch_input)]
 
         # Prepend an EdgeVec and append an OutputMat
@@ -91,7 +115,7 @@ class TI_MPS(nn.Module):
         batch_output = output.tensor
 
         # Check shape before returning output values
-        assert output.bond_str == 'bo'
+        assert output.bond_str == "bo"
         assert batch_output.size(0) == batch_size
         assert batch_output.size(1) == self.output_dim
 
@@ -137,43 +161,50 @@ class TI_MPS(nn.Module):
             # unembedded or all pre-embedded
             num_modes = len(input_data[0].shape)
             assert num_modes in [1, 2]
-            assert all([isinstance(s, torch.Tensor) and 
-                        len(s.shape) == num_modes for s in input_data])
-            assert num_modes == 1 or all([s.size(1) == feature_dim 
-                                          for s in input_data])
+            assert all(
+                [
+                    isinstance(s, torch.Tensor) and len(s.shape) == num_modes
+                    for s in input_data
+                ]
+            )
+            assert num_modes == 1 or all([s.size(1) == feature_dim for s in input_data])
 
             # Check that all the sequences are the same length or can be padded
             max_len = max([s.size(0) for s in input_data])
             can_pad = self.use_bias and self.fixed_bias
             if not can_pad and any([s.size(0) != max_len for s in input_data]):
-                raise ValueError("To process input_data as list of sequences "
-                      "with different lengths, must have self.use_bias="
-                      "self.fixed_bias=True (currently self.use_bias="
-                     f"{self.use_bias}, self.fixed_bias={self.fixed_bias})")
+                raise ValueError(
+                    "To process input_data as list of sequences "
+                    "with different lengths, must have self.use_bias="
+                    "self.fixed_bias=True (currently self.use_bias="
+                    f"{self.use_bias}, self.fixed_bias={self.fixed_bias})"
+                )
 
             # Pad the sequences with zeros (if needed), return as batch tensor
             if can_pad:
                 batch_size = len(input_data)
                 full_size = [batch_size, max_len, feature_dim]
-                batch_input = torch.zeros(full_size[:num_modes+1])
-                
+                batch_input = torch.zeros(full_size[: num_modes + 1])
+
                 # Copy each sequence into batch_input
                 for i, seq in enumerate(input_data):
-                    batch_input[i, :seq.size(0)] = seq
+                    batch_input[i, : seq.size(0)] = seq
             else:
                 batch_input = torch.stack(input_data)
 
             # Embed everything (if needed) and return the batch tensor
             if len(batch_input.shape) == 2:
                 batch_input = self.embed_input(batch_input)
-            
+
             return batch_input
 
         else:
-            raise ValueError("input_data must either be Tensor with shape"
-                  "[batch_size, length] or [batch_size, length, feature_dim], "
-                  "or list of Tensors with shapes [length_i, feature_dim] or "
-                  "[length_i]")
+            raise ValueError(
+                "input_data must either be Tensor with shape"
+                "[batch_size, length] or [batch_size, length, feature_dim], "
+                "or list of Tensors with shapes [length_i, feature_dim] or "
+                "[length_i]"
+            )
 
     def embed_input(self, input_data):
         """
@@ -196,8 +227,9 @@ class TI_MPS(nn.Module):
         # Apply a custom embedding map if it has been defined by the user
         if self.feature_map is not None:
             f_map = self.feature_map
-            embedded_data = torch.stack([torch.stack([f_map(x) for x in batch])
-                                                      for batch in input_data])
+            embedded_data = torch.stack(
+                [torch.stack([f_map(x) for x in batch]) for batch in input_data]
+            )
 
             # Make sure our embedded input has the desired size
             assert list(embedded_data.shape) == embedded_shape
@@ -205,12 +237,14 @@ class TI_MPS(nn.Module):
         # Otherwise, use a simple linear embedding map with feature_dim = 2
         else:
             if self.feature_dim != 2:
-                raise RuntimeError(f"self.feature_dim = {feature_dim}, but "
-                      "default feature_map requires self.feature_dim = 2")
+                raise RuntimeError(
+                    f"self.feature_dim = {feature_dim}, but "
+                    "default feature_map requires self.feature_dim = 2"
+                )
             embedded_data = torch.empty(embedded_shape)
 
-            embedded_data[:,:,0] = input_data
-            embedded_data[:,:,1] = 1 - input_data
+            embedded_data[:, :, 0] = input_data
+            embedded_data[:, :, 1] = 1 - input_data
 
         return embedded_data
 
@@ -233,9 +267,11 @@ class TI_MPS(nn.Module):
 
             out_shape, needed_shape = list(test_out.shape), [self.feature_dim]
             if out_shape != needed_shape:
-                raise ValueError("Given feature_map returns values with shape "
-                                f"{list(out_shape)}, but should return "
-                                f"values of size {list(needed_shape)}")
+                raise ValueError(
+                    "Given feature_map returns values with shape "
+                    f"{list(out_shape)}, but should return "
+                    f"values of size {list(needed_shape)}"
+                )
 
         self.feature_map = feature_map
 
@@ -297,6 +333,7 @@ class MPS(nn.Module):
                          merge state once, with two shifts leading to the 
                          update of all bond dimensions (default: 2000)
     """
+
     """
     MPS TODOS
         * Support arbitrary initializers
@@ -305,69 +342,100 @@ class MPS(nn.Module):
         * Add function to convert to canonical form
         * Fix issue of no training when use_bias=False  
     """
-    def __init__(self, input_dim, output_dim, bond_dim, feature_dim=2,
-                 periodic_bc=False, parallel_eval=False, label_site=None, 
-                 path=None, init_std=1e-9, initializer=None, use_bias=True, 
-                 adaptive_mode=False, cutoff=1e-10, merge_threshold=2000):
+
+    def __init__(
+        self,
+        input_dim,
+        output_dim,
+        bond_dim,
+        feature_dim=2,
+        periodic_bc=False,
+        parallel_eval=False,
+        label_site=None,
+        path=None,
+        init_std=1e-9,
+        initializer=None,
+        use_bias=True,
+        adaptive_mode=False,
+        cutoff=1e-10,
+        merge_threshold=2000,
+    ):
         super().__init__()
 
         if label_site is None:
             label_site = input_dim // 2
         assert label_site >= 0 and label_site <= input_dim
 
-        # Using bias matrices in adaptive_mode is too complicated, so I'm 
+        # Using bias matrices in adaptive_mode is too complicated, so I'm
         # disabling it here
         if adaptive_mode:
             use_bias = False
 
         # Our MPS is made of two InputRegions separated by an OutputSite.
         module_list = []
-        init_args = {'bond_str': 'slri',
-                     'shape': [label_site, bond_dim, bond_dim, feature_dim],
-                     'init_method': ('min_random_eye' if adaptive_mode else
-                     'random_zero', init_std, output_dim)}
+        init_args = {
+            "bond_str": "slri",
+            "shape": [label_site, bond_dim, bond_dim, feature_dim],
+            "init_method": (
+                "min_random_eye" if adaptive_mode else "random_zero",
+                init_std,
+                output_dim,
+            ),
+        }
 
         # The first input region
         if label_site > 0:
             tensor = init_tensor(**init_args)
 
-            module_list.append(InputRegion(tensor, use_bias=use_bias, 
-                                           fixed_bias=False))
+            module_list.append(InputRegion(tensor, use_bias=use_bias, fixed_bias=False))
 
         # The output site
-        tensor = init_tensor(shape=[output_dim, bond_dim, bond_dim],
-            bond_str='olr', init_method=('min_random_eye' if adaptive_mode else
-                                         'random_eye', init_std, output_dim))
+        tensor = init_tensor(
+            shape=[output_dim, bond_dim, bond_dim],
+            bond_str="olr",
+            init_method=(
+                "min_random_eye" if adaptive_mode else "random_eye",
+                init_std,
+                output_dim,
+            ),
+        )
         module_list.append(OutputSite(tensor))
 
         # The other input region
         if label_site < input_dim:
-            init_args['shape'] = [input_dim-label_site, bond_dim, bond_dim, 
-                                  feature_dim]
+            init_args["shape"] = [
+                input_dim - label_site,
+                bond_dim,
+                bond_dim,
+                feature_dim,
+            ]
             tensor = init_tensor(**init_args)
-            module_list.append(InputRegion(tensor, use_bias=use_bias, 
-                                           fixed_bias=False))
+            module_list.append(InputRegion(tensor, use_bias=use_bias, fixed_bias=False))
 
         # Initialize linear_region according to our adaptive_mode specification
         if adaptive_mode:
-            self.linear_region = MergedLinearRegion(module_list=module_list,
-                                 periodic_bc=periodic_bc,
-                                 parallel_eval=parallel_eval, cutoff=cutoff,
-                                 merge_threshold=merge_threshold)
+            self.linear_region = MergedLinearRegion(
+                module_list=module_list,
+                periodic_bc=periodic_bc,
+                parallel_eval=parallel_eval,
+                cutoff=cutoff,
+                merge_threshold=merge_threshold,
+            )
 
             # Initialize the list of bond dimensions, which starts out constant
-            self.bond_list = bond_dim * torch.ones(input_dim + 2, 
-                                                   dtype=torch.long)
+            self.bond_list = bond_dim * torch.ones(input_dim + 2, dtype=torch.long)
             if not periodic_bc:
                 self.bond_list[0], self.bond_list[-1] = 1, 1
 
             # Initialize the list of singular values, which start out at -1
-            self.sv_list = -1. * torch.ones([input_dim + 2, bond_dim])
+            self.sv_list = -1.0 * torch.ones([input_dim + 2, bond_dim])
 
         else:
-            self.linear_region = LinearRegion(module_list=module_list,
-                                 periodic_bc=periodic_bc,
-                                 parallel_eval=parallel_eval)
+            self.linear_region = LinearRegion(
+                module_list=module_list,
+                periodic_bc=periodic_bc,
+                parallel_eval=parallel_eval,
+            )
         assert len(self.linear_region) == input_dim
 
         if path:
@@ -451,9 +519,11 @@ class MPS(nn.Module):
         # If input already has a feature dimension, return it as is
         if len(input_data.shape) == 3:
             if input_data.size(2) != self.feature_dim:
-                raise ValueError(f"input_data has wrong shape to be unembedded "
-                "or pre-embedded data (input_data.shape = "
-                f"{list(input_data.shape)}, feature_dim = {self.feature_dim})")
+                raise ValueError(
+                    f"input_data has wrong shape to be unembedded "
+                    "or pre-embedded data (input_data.shape = "
+                    f"{list(input_data.shape)}, feature_dim = {self.feature_dim})"
+                )
             return input_data
 
         embedded_shape = list(input_data.shape) + [self.feature_dim]
@@ -461,18 +531,22 @@ class MPS(nn.Module):
         # Apply a custom embedding map if it has been defined by the user
         if self.feature_map is not None:
             f_map = self.feature_map
-            embedded_data = torch.stack([torch.stack([f_map(x) for x in batch])
-                                                      for batch in input_data])
+            embedded_data = torch.stack(
+                [torch.stack([f_map(x) for x in batch]) for batch in input_data]
+            )
 
             # Make sure our embedded input has the desired size
             assert embedded_data.shape == torch.Size(
-                   [input_data.size(0), self.input_dim, self.feature_dim])
+                [input_data.size(0), self.input_dim, self.feature_dim]
+            )
 
         # Otherwise, use a simple linear embedding map with feature_dim = 2
         else:
             if self.feature_dim != 2:
-                raise RuntimeError(f"self.feature_dim = {self.feature_dim}, "
-                      "but default feature_map requires self.feature_dim = 2")
+                raise RuntimeError(
+                    f"self.feature_dim = {self.feature_dim}, "
+                    "but default feature_map requires self.feature_dim = 2"
+                )
 
             embedded_data = torch.stack([input_data, 1 - input_data], dim=2)
 
@@ -495,9 +569,11 @@ class MPS(nn.Module):
             out_shape = feature_map(torch.tensor(0)).shape
             needed_shape = torch.Size([self.feature_dim])
             if out_shape != needed_shape:
-                raise ValueError("Given feature_map returns values of size "
-                                f"{list(out_shape)}, but should return "
-                                f"values of size {list(needed_shape)}")
+                raise ValueError(
+                    "Given feature_map returns values of size "
+                    f"{list(out_shape)}, but should return "
+                    f"values of size {list(needed_shape)}"
+                )
 
         self.feature_map = feature_map
 
@@ -518,15 +594,19 @@ class LinearRegion(nn.Module):
     """
     List of modules which feeds input to each module and returns reduced output
     """
-    def __init__(self, module_list, periodic_bc=False, parallel_eval=False,
-                 module_states=None):
+
+    def __init__(
+        self, module_list, periodic_bc=False, parallel_eval=False, module_states=None
+    ):
         # Check that module_list is a list whose entries are Pytorch modules
         if not isinstance(module_list, list) or module_list is []:
             raise ValueError("Input to LinearRegion must be nonempty list")
         for i, item in enumerate(module_list):
             if not isinstance(item, nn.Module):
-                raise ValueError("Input items to LinearRegion must be PyTorch "
-                                f"Module instances, but item {i} is not")
+                raise ValueError(
+                    "Input items to LinearRegion must be PyTorch "
+                    f"Module instances, but item {i} is not"
+                )
         super().__init__()
 
         # Wrap as a ModuleList for proper parameter registration
@@ -547,11 +627,11 @@ class LinearRegion(nn.Module):
         assert input_data.size(1) == len(self)
         periodic_bc = self.periodic_bc
         parallel_eval = self.parallel_eval
-        lin_bonds = ['l', 'r']
+        lin_bonds = ["l", "r"]
 
         # Whether to move intermediate vectors to a GPU (fixes Issue #8)
         to_cuda = input_data.is_cuda
-        device = f'cuda:{input_data.get_device()}' if to_cuda else 'cpu'
+        device = f"cuda:{input_data.get_device()}" if to_cuda else "cpu"
 
         # For each module, pull out the number of pixels needed and call that
         # module's forward() method, putting the result in contractable_list
@@ -562,7 +642,7 @@ class LinearRegion(nn.Module):
             if mod_len == 1:
                 mod_input = input_data[:, ind]
             else:
-                mod_input = input_data[:, ind:(ind+mod_len)]
+                mod_input = input_data[:, ind : (ind + mod_len)]
             ind += mod_len
 
             contractable_list.append(module(mod_input))
@@ -581,7 +661,7 @@ class LinearRegion(nn.Module):
             in_str, out_str = "", ""
             for c in bond_str:
                 if c in lin_bonds:
-                    in_str += 'l'
+                    in_str += "l"
                 else:
                     in_str += c
                     out_str += c
@@ -594,11 +674,12 @@ class LinearRegion(nn.Module):
         # contractable_list and reduce everything to get our output
         else:
             # Get the dimension of left and right bond indices
-            end_items = [contractable_list[i]for i in [0, -1]]
+            end_items = [contractable_list[i] for i in [0, -1]]
             bond_strs = [item.bond_str for item in end_items]
             bond_inds = [bs.index(c) for (bs, c) in zip(bond_strs, lin_bonds)]
-            bond_dims = [item.tensor.size(ind) for (item, ind) in
-                                               zip(end_items, bond_inds)]
+            bond_dims = [
+                item.tensor.size(ind) for (item, ind) in zip(end_items, bond_inds)
+            ]
 
             # Build dummy end vectors and insert them at the ends of our list
             end_vecs = [torch.zeros(dim).to(device) for dim in bond_dims]
@@ -626,12 +707,20 @@ class LinearRegion(nn.Module):
         """
         return sum([len(module) for module in self.module_list])
 
+
 class MergedLinearRegion(LinearRegion):
     """
     Dynamic variant of LinearRegion that periodically rearranges its submodules
     """
-    def __init__(self, module_list, periodic_bc=False, parallel_eval=False,
-                 cutoff=1e-10, merge_threshold=2000):
+
+    def __init__(
+        self,
+        module_list,
+        periodic_bc=False,
+        parallel_eval=False,
+        cutoff=1e-10,
+        merge_threshold=2000,
+    ):
         # Initialize a LinearRegion with our given module_list
         super().__init__(module_list, periodic_bc, parallel_eval)
 
@@ -640,7 +729,7 @@ class MergedLinearRegion(LinearRegion):
         # terms of one of the former lists
         self.offset = 0
         self._merge(offset=self.offset)
-        self._merge(offset=(self.offset+1)%2)
+        self._merge(offset=(self.offset + 1) % 2)
         self.module_list = getattr(self, f"module_list_{self.offset}")
 
         # Initialize variables used during switching
@@ -705,8 +794,8 @@ class MergedLinearRegion(LinearRegion):
             assert not isinstance(core, MergedOutput)
 
             # Apply internal merging routine if our core supports it
-            if hasattr(core, '_merge'):
-                merged_list.extend(core._merge(offset=site_num%2))
+            if hasattr(core, "_merge"):
+                merged_list.extend(core._merge(offset=site_num % 2))
             else:
                 merged_list.append(core)
 
@@ -719,9 +808,8 @@ class MergedLinearRegion(LinearRegion):
             combined_list = []
 
             while mod_num < len(merged_list) - 1:
-                left_core, right_core = merged_list[mod_num: mod_num+2]
-                new_core = self.combine(left_core, right_core,
-                                                   merging=True)
+                left_core, right_core = merged_list[mod_num : mod_num + 2]
+                new_core = self.combine(left_core, right_core, merging=True)
 
                 # If cores aren't combinable, move our sliding window by 1
                 if new_core is None or offset != site_num % 2:
@@ -731,14 +819,16 @@ class MergedLinearRegion(LinearRegion):
 
                 # If we get something new, move to the next distinct pair
                 else:
-                    assert new_core.core_len() == left_core.core_len() + \
-                                                  right_core.core_len()
+                    assert (
+                        new_core.core_len()
+                        == left_core.core_len() + right_core.core_len()
+                    )
                     combined_list.append(new_core)
                     mod_num += 2
                     site_num += new_core.core_len()
 
                 # Add the last core if there's nothing to merge it with
-                if mod_num == len(merged_list)-1:
+                if mod_num == len(merged_list) - 1:
                     combined_list.append(merged_list[mod_num])
                     mod_num += 1
 
@@ -760,8 +850,7 @@ class MergedLinearRegion(LinearRegion):
             module_list = getattr(self, list_name)
             assert len(module_list) == len(merged_list)
             for i in range(len(module_list)):
-                assert module_list[i].tensor.shape == \
-                       merged_list[i].tensor.shape
+                assert module_list[i].tensor.shape == merged_list[i].tensor.shape
                 module_list[i].tensor[:] = merged_list[i].tensor
 
     @torch.no_grad()
@@ -783,7 +872,7 @@ class MergedLinearRegion(LinearRegion):
         for core in merged_list:
 
             # Apply internal unmerging routine if our core supports it
-            if hasattr(core, '_unmerge'):
+            if hasattr(core, "_unmerge"):
                 new_cores, new_bonds, new_svs = core._unmerge(cutoff)
                 unmerged_list.extend(new_cores)
                 bond_list.extend(new_bonds[1:])
@@ -801,9 +890,8 @@ class MergedLinearRegion(LinearRegion):
             combined_list = []
 
             while mod_num < len(unmerged_list) - 1:
-                left_core, right_core = unmerged_list[mod_num: mod_num+2]
-                new_core = self.combine(left_core, right_core,
-                                                   merging=False)
+                left_core, right_core = unmerged_list[mod_num : mod_num + 2]
+                new_core = self.combine(left_core, right_core, merging=False)
 
                 # If cores aren't combinable, move our sliding window by 1
                 if new_core is None:
@@ -816,7 +904,7 @@ class MergedLinearRegion(LinearRegion):
                     mod_num += 2
 
                 # Add the last core if there's nothing to combine it with
-                if mod_num == len(unmerged_list)-1:
+                if mod_num == len(unmerged_list) - 1:
                     combined_list.append(unmerged_list[mod_num])
                     mod_num += 1
 
@@ -834,7 +922,7 @@ class MergedLinearRegion(LinearRegion):
         log_scale /= sum([len(ns) for ns in log_norms])
 
         # Now rescale all cores so that their norms are roughly equal
-        scales = [[torch.exp(log_scale-n) for n in ns] for ns in log_norms]
+        scales = [[torch.exp(log_scale - n) for n in ns] for ns in log_norms]
         for core, these_scales in zip(unmerged_list, scales):
             core.rescale_norm(these_scales)
 
@@ -853,25 +941,29 @@ class MergedLinearRegion(LinearRegion):
         """
 
         # Combine an OutputSite with a stray InputSite, return a MergedOutput
-        if merging and ((isinstance(left_core, OutputSite) and
-                         isinstance(right_core, InputSite)) or
-                            (isinstance(left_core, InputSite) and
-                            isinstance(right_core, OutputSite))):
+        if merging and (
+            (isinstance(left_core, OutputSite) and isinstance(right_core, InputSite))
+            or (isinstance(left_core, InputSite) and isinstance(right_core, OutputSite))
+        ):
 
             left_site = isinstance(left_core, InputSite)
             if left_site:
-                new_tensor = torch.einsum('lui,our->olri', [left_core.tensor,
-                                                            right_core.tensor])
+                new_tensor = torch.einsum(
+                    "lui,our->olri", [left_core.tensor, right_core.tensor]
+                )
             else:
-                new_tensor = torch.einsum('olu,uri->olri', [left_core.tensor,
-                                                            right_core.tensor])
+                new_tensor = torch.einsum(
+                    "olu,uri->olri", [left_core.tensor, right_core.tensor]
+                )
             return MergedOutput(new_tensor, left_output=(not left_site))
 
         # Combine an InputRegion with a stray InputSite, return an InputRegion
-        elif not merging and ((isinstance(left_core, InputRegion) and
-                               isinstance(right_core, InputSite)) or
-                                    (isinstance(left_core, InputSite) and
-                                    isinstance(right_core, InputRegion))):
+        elif not merging and (
+            (isinstance(left_core, InputRegion) and isinstance(right_core, InputSite))
+            or (
+                isinstance(left_core, InputSite) and isinstance(right_core, InputRegion)
+            )
+        ):
 
             left_site = isinstance(left_core, InputSite)
             if left_site:
@@ -902,12 +994,15 @@ class MergedLinearRegion(LinearRegion):
         """
         return sum([len(module) for module in self.module_list])
 
+
 class InputRegion(nn.Module):
     """
     Contiguous region of MPS input cores, associated with bond_str = 'slri'
     """
-    def __init__(self, tensor, use_bias=True, fixed_bias=True, bias_mat=None,
-                 ephemeral=False):
+
+    def __init__(
+        self, tensor, use_bias=True, fixed_bias=True, bias_mat=None, ephemeral=False
+    ):
         super().__init__()
 
         # Make sure tensor has correct size and the component mats are square
@@ -918,8 +1013,9 @@ class InputRegion(nn.Module):
         # If we are using bias matrices, set those up here
         if use_bias:
             assert bias_mat is None or isinstance(bias_mat, torch.Tensor)
-            bias_mat = torch.eye(bond_dim).unsqueeze(0) if bias_mat is None \
-                       else bias_mat
+            bias_mat = (
+                torch.eye(bond_dim).unsqueeze(0) if bias_mat is None else bias_mat
+            )
 
             bias_modes = len(list(bias_mat.shape))
             assert bias_modes in [2, 3]
@@ -928,20 +1024,20 @@ class InputRegion(nn.Module):
 
         # Register our tensors as a Pytorch Parameter or Tensor
         if ephemeral:
-            self.register_buffer(name='tensor', tensor=tensor.contiguous())
-            self.register_buffer(name='bias_mat', tensor=bias_mat)
+            self.register_buffer(name="tensor", tensor=tensor.contiguous())
+            self.register_buffer(name="bias_mat", tensor=bias_mat)
         else:
-            self.register_parameter(name='tensor', 
-                                    param=nn.Parameter(tensor.contiguous()))
+            self.register_parameter(
+                name="tensor", param=nn.Parameter(tensor.contiguous())
+            )
             if fixed_bias:
-                self.register_buffer(name='bias_mat', tensor=bias_mat)
+                self.register_buffer(name="bias_mat", tensor=bias_mat)
             else:
-                self.register_parameter(name='bias_mat', 
-                                        param=nn.Parameter(bias_mat))
+                self.register_parameter(name="bias_mat", param=nn.Parameter(bias_mat))
 
         self.use_bias = use_bias
         self.fixed_bias = fixed_bias
-        
+
     def forward(self, input_data):
         """
         Contract input with MPS cores and return result as a MatRegion
@@ -957,7 +1053,7 @@ class InputRegion(nn.Module):
         assert input_data.size(2) == tensor.size(3)
 
         # Contract the input with our core tensor
-        mats = torch.einsum('slri,bsi->bslr', [tensor, input_data])
+        mats = torch.einsum("slri,bsi->bslr", [tensor, input_data])
 
         # If we're using bias matrices, add those here
         if self.use_bias:
@@ -999,8 +1095,7 @@ class InputRegion(nn.Module):
             assert len(even_cores) == len(odd_cores)
 
             # Multiply all pairs of cores, keeping inputs separate
-            merged_cores = torch.einsum('slui,surj->slrij', [even_cores,
-                                                             odd_cores])
+            merged_cores = torch.einsum("slui,surj->slrij", [even_cores, odd_cores])
             out_list = [MergedInput(merged_cores)]
 
         # Remove empty MergedInputs, which appear in very small InputRegions
@@ -1042,6 +1137,7 @@ class InputRegion(nn.Module):
     def __len__(self):
         return self.tensor.size(0)
 
+
 class MergedInput(nn.Module):
     """
     Contiguous region of merged MPS cores, each taking in a pair of input data
@@ -1049,9 +1145,10 @@ class MergedInput(nn.Module):
     Since MergedInput arises after contracting together existing input cores,
     a merged input tensor is required for initialization
     """
+
     def __init__(self, tensor):
         # Check that our input tensor has the correct shape
-        bond_str = 'slrij'
+        bond_str = "slrij"
         shape = tensor.shape
         assert len(shape) == 5
         assert shape[1] == shape[2]
@@ -1060,8 +1157,7 @@ class MergedInput(nn.Module):
         super().__init__()
 
         # Register our tensor as a Pytorch Parameter
-        self.register_parameter(name='tensor', 
-                                param=nn.Parameter(tensor.contiguous()))
+        self.register_parameter(name="tensor", param=nn.Parameter(tensor.contiguous()))
 
     def forward(self, input_data):
         """
@@ -1083,8 +1179,8 @@ class MergedInput(nn.Module):
         inputs = [input_data[:, 0::2], input_data[:, 1::2]]
 
         # Contract the odd (right-most) and even inputs with merged cores
-        tensor = torch.einsum('slrij,bsj->bslri', [tensor, inputs[1]])
-        mats = torch.einsum('bslri,bsi->bslr', [tensor, inputs[0]])
+        tensor = torch.einsum("slrij,bsj->bslri", [tensor, inputs[1]])
+        mats = torch.einsum("bslri,bsi->bslr", [tensor, inputs[0]])
 
         return MatRegion(mats)
 
@@ -1096,17 +1192,18 @@ class MergedInput(nn.Module):
         original MergedInput (same number of inputs), but its core_len will
         be doubled (twice as many individual cores)
         """
-        bond_str = 'slrij'
+        bond_str = "slrij"
         tensor = self.tensor
-        svd_string = 'lrij->lui,urj'
+        svd_string = "lrij->lui,urj"
         max_D = tensor.size(1)
 
         # Split every one of the cores into two and add them both to core_list
         core_list, bond_list, sv_list = [], [-1], [-1]
         for merged_core in tensor:
             sv_vec = torch.empty(max_D)
-            left_core, right_core, bond_dim = svd_flex(merged_core, svd_string,
-                                              max_D, cutoff, sv_vec=sv_vec)
+            left_core, right_core, bond_dim = svd_flex(
+                merged_core, svd_string, max_D, cutoff, sv_vec=sv_vec
+            )
 
             core_list += [left_core, right_core]
             bond_list += [bond_dim, -1]
@@ -1144,15 +1241,16 @@ class MergedInput(nn.Module):
         """
         return 2 * self.tensor.size(0)
 
+
 class InputSite(nn.Module):
     """
     A single MPS core which takes in a single input datum, bond_str = 'lri'
     """
+
     def __init__(self, tensor):
         super().__init__()
         # Register our tensor as a Pytorch Parameter
-        self.register_parameter(name='tensor', 
-                                param=nn.Parameter(tensor.contiguous()))
+        self.register_parameter(name="tensor", param=nn.Parameter(tensor.contiguous()))
 
     def forward(self, input_data):
         """
@@ -1167,7 +1265,7 @@ class InputSite(nn.Module):
         assert input_data.size(1) == tensor.size(2)
 
         # Contract the input with our core tensor
-        mat = torch.einsum('lri,bi->blr', [tensor, input_data])
+        mat = torch.einsum("lri,bi->blr", [tensor, input_data])
 
         return SingleMat(mat)
 
@@ -1194,15 +1292,16 @@ class InputSite(nn.Module):
     def __len__(self):
         return 1
 
+
 class OutputSite(nn.Module):
     """
     A single MPS core with no input and a single output index, bond_str = 'olr'
     """
+
     def __init__(self, tensor):
         super().__init__()
         # Register our tensor as a Pytorch Parameter
-        self.register_parameter(name='tensor', 
-                                param=nn.Parameter(tensor.contiguous()))
+        self.register_parameter(name="tensor", param=nn.Parameter(tensor.contiguous()))
 
     def forward(self, input_data):
         """
@@ -1233,6 +1332,7 @@ class OutputSite(nn.Module):
     def __len__(self):
         return 0
 
+
 class MergedOutput(nn.Module):
     """
     Merged MPS core taking in one input datum and returning an output vector
@@ -1245,15 +1345,15 @@ class MergedOutput(nn.Module):
         left_output (bool): Specifies if the output core is on the left side of
                             the input core (True), or on the right (False)
     """
+
     def __init__(self, tensor, left_output):
         # Check that our input tensor has the correct shape
-        bond_str = 'olri'
+        bond_str = "olri"
         assert len(tensor.shape) == 4
         super().__init__()
 
         # Register our tensor as a Pytorch Parameter
-        self.register_parameter(name='tensor', 
-                                param=nn.Parameter(tensor.contiguous()))
+        self.register_parameter(name="tensor", param=nn.Parameter(tensor.contiguous()))
         self.left_output = left_output
 
     def forward(self, input_data):
@@ -1269,7 +1369,7 @@ class MergedOutput(nn.Module):
         assert input_data.size(1) == tensor.size(3)
 
         # Contract the input with our core tensor
-        tensor = torch.einsum('olri,bi->bolr', [tensor, input_data])
+        tensor = torch.einsum("olri,bi->bolr", [tensor, input_data])
 
         return OutputCore(tensor)
 
@@ -1281,28 +1381,36 @@ class MergedOutput(nn.Module):
         the SVD cutoff, but will generally be padded with zeros to give the
         new index a regular size.
         """
-        bond_str = 'olri'
+        bond_str = "olri"
         tensor = self.tensor
         left_output = self.left_output
         if left_output:
-            svd_string = 'olri->olu,uri'
+            svd_string = "olri->olu,uri"
             max_D = tensor.size(2)
             sv_vec = torch.empty(max_D)
 
-            output_core, input_core, bond_dim = svd_flex(tensor, svd_string,
-                                                max_D, cutoff, sv_vec=sv_vec)
-            return ([OutputSite(output_core), InputSite(input_core)],
-                    [-1, bond_dim, -1], [-1, sv_vec, -1])
+            output_core, input_core, bond_dim = svd_flex(
+                tensor, svd_string, max_D, cutoff, sv_vec=sv_vec
+            )
+            return (
+                [OutputSite(output_core), InputSite(input_core)],
+                [-1, bond_dim, -1],
+                [-1, sv_vec, -1],
+            )
 
         else:
-            svd_string = 'olri->our,lui'
+            svd_string = "olri->our,lui"
             max_D = tensor.size(1)
             sv_vec = torch.empty(max_D)
 
-            output_core, input_core, bond_dim = svd_flex(tensor, svd_string,
-                                                max_D, cutoff, sv_vec=sv_vec)
-            return ([InputSite(input_core), OutputSite(output_core)],
-                    [-1, bond_dim, -1], [-1, sv_vec, -1])
+            output_core, input_core, bond_dim = svd_flex(
+                tensor, svd_string, max_D, cutoff, sv_vec=sv_vec
+            )
+            return (
+                [InputSite(input_core), OutputSite(output_core)],
+                [-1, bond_dim, -1],
+                [-1, sv_vec, -1],
+            )
 
     def get_norm(self):
         """
@@ -1327,6 +1435,7 @@ class MergedOutput(nn.Module):
     def __len__(self):
         return 1
 
+
 class InitialVector(nn.Module):
     """
     Vector of ones and zeros to act as initial vector within the MPS
@@ -1338,8 +1447,8 @@ class InitialVector(nn.Module):
     If fixed_vec is False, then the initial vector will be registered as a 
     trainable model parameter.
     """
-    def __init__(self, bond_dim, fill_dim=None, fixed_vec=True, 
-                 is_left_vec=True):
+
+    def __init__(self, bond_dim, fill_dim=None, fixed_vec=True, is_left_vec=True):
         super().__init__()
 
         vec = torch.ones(bond_dim)
@@ -1349,11 +1458,11 @@ class InitialVector(nn.Module):
 
         if fixed_vec:
             vec.requires_grad = False
-            self.register_buffer(name='vec', tensor=vec)
+            self.register_buffer(name="vec", tensor=vec)
         else:
             vec.requires_grad = True
-            self.register_parameter(name='vec', param=nn.Parameter(vec))
-        
+            self.register_parameter(name="vec", param=nn.Parameter(vec))
+
         assert isinstance(is_left_vec, bool)
         self.is_left_vec = is_left_vec
 
@@ -1369,6 +1478,7 @@ class InitialVector(nn.Module):
     def __len__(self):
         return 0
 
+
 class TerminalOutput(nn.Module):
     """
     Output matrix at end of chain to transmute virtual state into output vector
@@ -1377,29 +1487,31 @@ class TerminalOutput(nn.Module):
     [bond_dim, output_dim] will be used as a state transducer. If fixed_mat is
     False, then the matrix will be registered as a trainable model parameter. 
     """
-    def __init__(self, bond_dim, output_dim, fixed_mat=False,
-                 is_left_mat=False):
+
+    def __init__(self, bond_dim, output_dim, fixed_mat=False, is_left_mat=False):
         super().__init__()
 
         # I don't have a nice initialization scheme for a non-injective fixed
         # state transducer, so just throw an error if that's needed
         if fixed_mat and output_dim > bond_dim:
-            raise ValueError("With fixed_mat=True, TerminalOutput currently "
-                             "only supports initialization for bond_dim >= "
-                             "output_dim, but here bond_dim="
-                            f"{bond_dim} and output_dim={output_dim}")
+            raise ValueError(
+                "With fixed_mat=True, TerminalOutput currently "
+                "only supports initialization for bond_dim >= "
+                "output_dim, but here bond_dim="
+                f"{bond_dim} and output_dim={output_dim}"
+            )
 
         # Initialize the matrix and register it appropriately
         mat = torch.eye(bond_dim, output_dim)
         if fixed_mat:
             mat.requires_grad = False
-            self.register_buffer(name='mat', tensor=mat)
+            self.register_buffer(name="mat", tensor=mat)
         else:
             # Add some noise to help with training
             mat = mat + torch.randn_like(mat) / bond_dim
 
             mat.requires_grad = True
-            self.register_parameter(name='mat', param=nn.Parameter(mat))
+            self.register_parameter(name="mat", param=nn.Parameter(mat))
 
         assert isinstance(is_left_mat, bool)
         self.is_left_mat = is_left_mat

@@ -3,29 +3,34 @@ import torch
 import sys
 from random import randint
 
-sys.path.append('..')
+sys.path.append("..")
 from torchmps import TI_MPS
 
 feature_dim = 2
-batch_size  = 7
-seq_length  = 4
-output_dim  = 3
-bond_dim    = 5
+batch_size = 7
+seq_length = 4
+output_dim = 3
+bond_dim = 5
 
 # Generate a random pre-embedded batch input tensor
 batch_input = torch.randn([batch_size, seq_length, feature_dim])
 
 # Generate a list of random input sequences with different lengths
-seq_input = [torch.randn([randint(1,seq_length)]) for _ in range(batch_size)]
-seq_input_emb = [torch.randn([randint(1,seq_length), feature_dim]) 
-                 for _ in range(batch_size)]
+seq_input = [torch.randn([randint(1, seq_length)]) for _ in range(batch_size)]
+seq_input_emb = [
+    torch.randn([randint(1, seq_length), feature_dim]) for _ in range(batch_size)
+]
 
 # Base configuration for our test
-base_config = {'parallel_eval': False, 'fixed_ends': False, 
-               'use_bias': True, 'fixed_bias': True}
+base_config = {
+    "parallel_eval": False,
+    "fixed_ends": False,
+    "use_bias": True,
+    "fixed_bias": True,
+}
 
 # Test out multiple configurations
-all_configs = [dict(base_config.items()) for _ in range(len(base_config)+1)]
+all_configs = [dict(base_config.items()) for _ in range(len(base_config) + 1)]
 for i, param in enumerate(base_config.keys(), 1):
     all_configs[i][param] = not base_config[param]
 
@@ -47,11 +52,11 @@ for config in all_configs:
 
     # Try feeding in our embedded and unembedded variable length inputs, but
     # skip this when our zero-padding rules would throw an error
-    if not (config['use_bias'] and config['fixed_bias']):
+    if not (config["use_bias"] and config["fixed_bias"]):
         continue
 
     # Get outputs, check size
     seq_output = mps_module(seq_input)
     seq_output_emb = mps_module(seq_input_emb)
-    assert list(seq_output.shape)     == [batch_size, output_dim]
+    assert list(seq_output.shape) == [batch_size, output_dim]
     assert list(seq_output_emb.shape) == [batch_size, output_dim]
