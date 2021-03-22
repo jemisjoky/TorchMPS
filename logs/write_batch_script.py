@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
-batch_script_name = 'batch_script.sh'
+
+batch_script_name = "batch_script.sh"
 
 # The header for our shell script
 print("#!/bin/sh")
@@ -11,15 +12,14 @@ print()
 
 ### SPECIFY YOUR EXPERIMENT HERE ###
 
-# experiment_name will form part of our logfile name, so don't include any 
+# experiment_name will form part of our logfile name, so don't include any
 # special characters or (ideally) spaces
-experiment_name = 'adaptive'
+experiment_name = "adaptive"
 experiment_name = experiment_name.upper()
 
 # The parameters we want to search over
 num_trials = 6
-variables = {'bond_dim': [10, 20, 40, 60, 80, 100],
-             'adaptive_mode': 1}
+variables = {"bond_dim": [10, 20, 40, 60, 80, 100], "adaptive_mode": 1}
 
 ### FILE INFORMATION ###
 
@@ -32,28 +32,40 @@ srun_call = "srun"
 
 ### THE FOLLOWING RUNS THE EXPERIMENTS, DON'T CUSTOMIZE ###
 
-defaults = {'lr': 1e-4,
-            'init_std': 1e-9,
-            'l2_reg': 0.,
-            'num_train': 60000,
-            'batch_size': 100,
-            'bond_dim': 20,
-            'num_epochs': 30,
-            'num_test': 10000,
-            'adaptive_mode': 0,
-            'periodic_bc': 0,
-            'merge_threshold': 2000,
-            'cutoff': 1e-10,
-            'use_gpu': 1,
-            'random_path': 0
-            }
+defaults = {
+    "lr": 1e-4,
+    "init_std": 1e-9,
+    "l2_reg": 0.0,
+    "num_train": 60000,
+    "batch_size": 100,
+    "bond_dim": 20,
+    "num_epochs": 30,
+    "num_test": 10000,
+    "adaptive_mode": 0,
+    "periodic_bc": 0,
+    "merge_threshold": 2000,
+    "cutoff": 1e-10,
+    "use_gpu": 1,
+    "random_path": 0,
+}
 
 # The parameters fed to our script, along with shorthand versions
-all_params = {'lr': 'lr', 'init_std': 'std', 'l2_reg': 'wd', 'num_train': 'nt',
-              'batch_size': 'bs', 'bond_dim': 'bd', 'num_epochs': 'ne',
-              'num_test': 'nte', 'adaptive_mode': 'dm', 'periodic_bc': 'bc',
-              'merge_threshold': 'thr', 'cutoff': 'cut', 'use_gpu': 'gpu',
-              'random_path': 'path'}
+all_params = {
+    "lr": "lr",
+    "init_std": "std",
+    "l2_reg": "wd",
+    "num_train": "nt",
+    "batch_size": "bs",
+    "bond_dim": "bd",
+    "num_epochs": "ne",
+    "num_test": "nte",
+    "adaptive_mode": "dm",
+    "periodic_bc": "bc",
+    "merge_threshold": "thr",
+    "cutoff": "cut",
+    "use_gpu": "gpu",
+    "random_path": "path",
+}
 
 # Print some metadata about the experiment
 print(f'echo "Running experiment {experiment_name}, with:"')
@@ -91,7 +103,7 @@ while exp_count < num_trials:
     log_name = experiment_name
     for param in variables.keys():
         log_name += f"_{all_params[param]}"
-        if param in ['lr', 'init_std', 'l2_reg']:
+        if param in ["lr", "init_std", "l2_reg"]:
             log_name += f"_{these_params[param]:.2e}"
         else:
             log_name += f"_{these_params[param]}"
@@ -101,7 +113,7 @@ while exp_count < num_trials:
     # while os.path.isfile(log_name):
     #     suffix += 1
     #     log_name = base_name + f"_{suffix}"
-    log_name += '.log'
+    log_name += ".log"
 
     # Make the actual system call, which happens using srun
     # call_str = f"{srun_call} {call_str} >> {log_name} &"

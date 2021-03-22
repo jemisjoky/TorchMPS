@@ -2,7 +2,7 @@
 import torch
 import sys
 
-sys.path.append('..')
+sys.path.append("..")
 from torchmps import MPS
 
 # Get a reference input to our map
@@ -10,9 +10,12 @@ std_input = torch.randn([7, 10])
 
 # Define a couple custom feature maps
 def feature_map2(inp):
-    return torch.tensor([inp, 1-inp])
+    return torch.tensor([inp, 1 - inp])
+
+
 def feature_map3(inp):
-    return torch.tensor([inp, 1-inp, 2-inp])
+    return torch.tensor([inp, 1 - inp, 2 - inp])
+
 
 my_mps2 = MPS(10, 5, 2, feature_dim=2)
 default_output2 = my_mps2(std_input)
