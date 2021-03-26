@@ -1,18 +1,8 @@
-# Python environment
-__pycache__/
-
-# Comet info
-logs/.comet.config
-
-# MNIST data
-mnist/
-fashion_mnist/
-
 # Mac junk
 *.DS_Store
 
-# Sandbox for random things
-sandbox.py
-
 # Local build file for doc pages
 docs/_build/
+
+# Ignore STensor folder before it gets dedicated pypi listing
+stensor/
