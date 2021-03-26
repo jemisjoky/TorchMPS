@@ -17,5 +17,3 @@
 from pytest.mark import parameterize
 
 import torch
-
-def 
