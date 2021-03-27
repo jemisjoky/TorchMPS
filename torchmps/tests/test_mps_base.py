@@ -17,3 +17,9 @@
 from pytest.mark import parameterize
 
 import torch
+
+from torchmps import contract_matrices, 
+
+test_cases
+
+def test_mat_reduce_par_non_batch_input():

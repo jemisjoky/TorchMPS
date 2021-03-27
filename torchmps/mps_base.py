@@ -1,4 +1,4 @@
-# Copyright (C) 2021 Jacob Ellwyn Miller
+# Copyright (C) 2021 Jacob Miller
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,7 +25,7 @@ from utils2 import bundle_tensors
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
 
-def contract_mat_seq(
+def contract_matrices(
     matrices: TensorSeq,
     bnd_vecs: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
     parallel_eval: bool = False,

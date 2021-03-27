@@ -1,8 +1,4 @@
-# Mac junk
-*.DS_Store
-
 # Local build file for doc pages
 docs/_build/
 
-# Ignore STensor folder before it gets dedicated pypi listing
-stensor/
+torchmps.egg-info/
