@@ -1,4 +1,15 @@
 # Local build file for doc pages
 docs/_build/
 
+# Local PyPI info
 torchmps.egg-info/
+pyproject.toml
+
+# Sublime project info
+sublime/
+
+# Pipenv files
+Pipfile
+Pipfile.lock
+
+__pycache__/

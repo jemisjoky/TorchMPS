@@ -14,13 +14,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Basic MPS functions used for uniform and non-uniform models"""
-from typing import Union, Tuple, Optional
-from collections.abc import Sequence
+from typing import Union, Tuple, Sequence, Optional
 
 import torch
 from torch import Tensor
 
-from utils2 import bundle_tensors
+from torchmps.utils2 import bundle_tensors
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -58,10 +57,10 @@ def contract_matrices(
     """
     # Convert matrices to single batch tensor, provided all shapes agree
     matrices = bundle_tensors(matrices)
+    same_shape = isinstance(matrices, Tensor)
 
     # Decide whether to use parallel evaluation algorithm
     no_bvecs = bnd_vecs is None
-    same_shape = isinstance(matrices, Tensor)
     use_parallel = same_shape and (parallel_eval or no_bvecs)
 
     if use_parallel:
@@ -85,5 +84,8 @@ def matvec_reduce_seq(
 ) -> Tensor:
     """
     Contract sequence of matrices with left/right boundary vectors
+
+    Args:
+        matrices: Single batch tensor or sequence of matrices to multiply in order. When additional batch indices are present,
     """
     pass
