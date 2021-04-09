@@ -13,14 +13,24 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests for MPS base functions"""
+"""Tests for utility functions"""
 import pytest
 
 import torch
 
-from torchmps.mps_base import contract_matrices
+from torchmps.utils2 import batch_broadcast
 
-inhom_mat_seq = ()
 
-def test_mat_reduce_par_non_batch_input():
-    pass
+def test_batch_broadcast_good_shapes():
+    t_shape = (5, 3, 2, 2, 2)
+    m_shape = (1, 3, 3, 4)
+    v_shape = (3,)
+    s_shape = (2, 1, 1)
+
+    tensors = [torch.ones(*shp) for shp in (t_shape, m_shape, v_shape, s_shape)]
+    non_batch = (3, 2, 1, 0)
+    out_tensors = batch_broadcast(tensors, non_batch)
+    shapes = [tuple(t.shape) for t in out_tensors]
+
+    assert shapes == [(2, 5, 3, 2, 2, 2), (2, 5, 3, 3, 4), (2, 5, 3, 3), (2, 5, 3)]
+
