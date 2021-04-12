@@ -19,18 +19,18 @@ from typing import Union, Tuple, Sequence, Optional
 import torch
 from torch import Tensor
 
-from torchmps.utils2 import bundle_tensors
+from torchmps.utils2 import bundle_tensors, batch_broadcast
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
 
-def contract_matrices(
+def contract_matseq(
     matrices: TensorSeq,
-    bnd_vecs: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
+    bnd_vecs: Tuple[Optional[Tensor], Optional[Tensor]] = (None, None),
     parallel_eval: bool = False,
 ) -> Tensor:
     """
-    Matrix-multiply sequence of matrices, with optional boundary vectors
+    Batch matrix-multiply sequence of matrices, with optional boundary vectors
 
     The output is a single matrix, or a scalar if a pair of boundary
     vectors are given. In the latter case, the first vector is treated as
@@ -42,50 +42,107 @@ def contract_matrices(
     cost. By default, this method is only used when an output matrix is
     desired, but can be forced by setting parallel_eval to True.
 
+    When matrices or boundary vectors contain additional batch indices
+    (assumed to be left-most indices), then matrix multiplication is
+    carried out over all batch indices, which are broadcast together.
+    Shapes described below neglect these additional batch indices.
+
     Args:
-        matrices: Single tensor of shape (len, D, D), or sequence of
+        matrices: Single tensor of shape (L, D, D), or sequence of
             matrices with compatible shapes :math:`(D_i, D_{i+1})`, for
-            :math:`i = 0, 1, \ldots, len`
-        bnd_vecs: Pair of vectors to place on the boundaries, specified as
-            matrix of shape (2, D) or pair of vectors
-        parallel_eval: Whether or not to force parallel evaluation of
-            matrix contraction
+            :math:`i = 0, 1, \ldots, L`.
+        bnd_vecs: Pair of vectors `(l_vec, r_vec)` to place on the
+            boundaries of contracted matrices. Either value can be None,
+            in which case that matrix index is left open.
+        parallel_eval: Whether or not to force parallel evaluation in
+            matrix contraction, which requires all input matrices to have
+            same shape.
 
     Returns:
-        contracted: Single scalar (or matrix if bnd_vecs isn't given)
-            giving the sequential contraction of input matrices and vectors
+        contraction: Single scalar, vector, or matrix, equal to the
+            sequential contraction of the input matrices with (resp.)
+            two, one, or zero boundary vectors.
     """
+    # Count number of boundary vectors
+    bnd_vecs = list(bnd_vecs)
+    num_vecs = sum(v is not None for v in bnd_vecs)
+    assert all(v is None or isinstance(v, Tensor) for v in bnd_vecs)
+    assert num_vecs <= 2
+
     # Convert matrices to single batch tensor, provided all shapes agree
     matrices = bundle_tensors(matrices)
     same_shape = isinstance(matrices, Tensor)
+    num_mats = matrices.shape[-3] if same_shape else len(matrices)
 
     # Decide whether to use parallel evaluation algorithm
-    no_bvecs = bnd_vecs is None
-    use_parallel = same_shape and (parallel_eval or no_bvecs)
+    use_parallel = same_shape and (parallel_eval or num_vecs == 0)
+
+    # Broadcast batch dimensions of matrices and boundary vectors
+    if num_vecs == 0:
+        if not same_shape:
+            matrices = batch_broadcast(matrices, (2,) * num_mats)
+    elif num_vecs == 1:
+        v_ind = [v is not None for v in bnd_vecs].index(True)
+        vec = bnd_vecs[v_ind]
+        if same_shape:
+            vec, matrices = batch_broadcast((vec, matrices), (1, 3))
+        else:
+            outs = batch_broadcast((vec,) + tuple(matrices), (1,) + (2,) * num_mats)
+            vec, matrices = outs[0], outs[1:]
+        bnd_vecs[v_ind] = vec
+    else:
+        if same_shape:
+            outs = batch_broadcast(bnd_vecs + [matrices], (1, 1, 3))
+            bnd_vecs, matrices = outs[:2], outs[2]
+        else:
+            outs = batch_broadcast(bnd_vecs + list(matrices), (1, 1) + (2,) * num_mats)
+            bnd_vecs, matrices = outs[:2], outs[2:]
 
     if use_parallel:
-        prod_mat = mat_reduce_par(matrices)
+        # Reduce product of all matrices in parallel
+        product = mat_reduce_par(matrices)
 
-        # TODO: Contraction with boundary matrices
+        # Contract with boundary vectors
+        if bnd_vecs[1] is not None:
+            product = torch.matmul(product, bnd_vecs[1][..., None])
+            product = product[..., 0]
+        if bnd_vecs[0] is not None:
+            product = torch.matmul(bnd_vecs[0][..., None, :], product)
+            product = product[..., 0, :]
+
+        return product
 
     else:
-        return matvec_reduce_seq(matrices, bnd_vecs)
+        if num_vecs == 0:
+            return matvec_reduce_seq(matrices)
+        elif num_vecs == 1:
+            pass
 
 
 def mat_reduce_par(matrices: Tensor) -> Tensor:
     """
     Contract sequence of square matrices using parallel mat-mat multiplies
-    """
-    pass
-
-
-def matvec_reduce_seq(
-    matrices: TensorSeq, bnd_vecs: Union[Tensor, Tuple[Tensor, Tensor]]
-) -> Tensor:
-    """
-    Contract sequence of matrices with left/right boundary vectors
 
     Args:
-        matrices: Single batch tensor or sequence of matrices to multiply in order. When additional batch indices are present,
+        matrices: Sequence of matrices to multiply.
+
+    Returns:
+        prod_mat: Product of input matrices
     """
     pass
+
+
+def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
+    """
+    Multiply sequence of matrices sequentially, from left to right
+
+    Args:
+        matrices: Sequence of matrices to multiply.
+
+    Returns:
+        prod_mat: Product of input matrices
+    """
+    prod_mat, matrices = matrices[0], matrices[1:]
+
+    for mat in matrices:
+        pass
