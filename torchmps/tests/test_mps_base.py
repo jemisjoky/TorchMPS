@@ -17,10 +17,29 @@
 import pytest
 
 import torch
+from hypothesis import given, settings, strategies as st
 
-from torchmps.mps_base import contract_matrices
+from torchmps.mps_base import contract_matseq
 
-inhom_mat_seq = ()
+bool_st = st.booleans()
+bond_dim_st = st.integers(1, 20)
+batch_shape_st = st.lists(st.integers(1, 10), min_size=0, max_size=4)
 
-def test_mat_reduce_par_non_batch_input():
+
+def boundary_contraction(mats, lvec, rvec, use_lvec, use_rvec):
+    """Handle conditional contraction with boundary vectors"""
+    pass
+
+
+@given(batch_shape_st, bond_dim_st, st.integers(0, 10), bool_st, bool_st)
+def test_contract_matseq_identity_batches(batch_shape, bond_dim, seq_len, use_lvec, use_rvec):
+    """
+    Multipy random multiples of the identity matrix w/ variable batch size
+    """
+    pass
+
+
+@given(st.lists(bond_dim_st, min_size=1, max_size=10), bool_st, bool_st)
+def test_contract_matseq_random_inhom_bonddim(bonddim_list, use_lvec, use_rvec):
+    """Multiply random matrices with inhomogeneous bond dimensions"""
     pass

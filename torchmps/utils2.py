@@ -69,6 +69,7 @@ def batch_broadcast(tens_list: Sequence[Tensor], num_nonbatch: Sequence[int]):
         out_list: Sequence of tensors, which are broadcasted versions of
             those input in `tens_list`
     """
+    assert not isinstance(tens_list, Tensor)
     assert len(tens_list) == len(num_nonbatch)
     assert all(i >= 0 for i in num_nonbatch)
     assert all(t.ndim >= nnb for t, nnb in zip(tens_list, num_nonbatch))
