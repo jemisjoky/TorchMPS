@@ -40,7 +40,8 @@ def bundle_tensors(tensors: TensorSeq, dim: int = 0) -> TensorSeq:
     if isinstance(tensors, Tensor):
         return tensors
 
-    if len(set(t.shape for t in tensors)) > 1:
+    # Note that empty sequences are returned unchanged
+    if len(set(t.shape for t in tensors)) > 1 or len(tensors) == 0:
         return tensors
     else:
         return torch.stack(tensors)
@@ -73,6 +74,10 @@ def batch_broadcast(tens_list: Sequence[Tensor], num_nonbatch: Sequence[int]):
     assert len(tens_list) == len(num_nonbatch)
     assert all(i >= 0 for i in num_nonbatch)
     assert all(t.ndim >= nnb for t, nnb in zip(tens_list, num_nonbatch))
+
+    # Return single tensors or empty sequences unchanged
+    if len(tens_list) < 2:
+        return tens_list
 
     # Compute shape of broadcasted batch dimensions
     b_shapes = [t.shape[: (t.ndim - nnb)] for t, nnb in zip(tens_list, num_nonbatch)]
