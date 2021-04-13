@@ -73,7 +73,7 @@ def contract_matseq(
     assert num_vecs <= 2
 
     # Convert matrices to single batch tensor, provided all shapes agree
-    matrices = bundle_tensors(matrices)
+    matrices = bundle_tensors(matrices, dim=-3)
     same_shape = isinstance(matrices, Tensor)
     num_mats = matrices.shape[-3] if same_shape else len(matrices)
 
@@ -105,13 +105,15 @@ def contract_matseq(
         # Reduce product of all matrices in parallel
         product = mat_reduce_par(matrices)
 
-        # Contract with boundary vectors
-        if real_vec[1]:
-            product = torch.matmul(product, bnd_vecs[1][..., None])
-            product.squeeze_(-1)
+        # Contract with boundary vectors, using intermediate dummy axes
         if real_vec[0]:
             product = torch.matmul(bnd_vecs[0][..., None, :], product)
+        if real_vec[1]:
+            product = torch.matmul(product, bnd_vecs[1][..., None])
+        if real_vec[0]:
             product.squeeze_(-2)
+        if real_vec[1]:
+            product.squeeze_(-1)
 
     else:
         if num_vecs == 0 and len(matrices) == 0:
@@ -120,19 +122,22 @@ def contract_matseq(
             )
 
         # Prepend/append boundary vectors, augmented with dummy dimensions
-        matrices = list(matrices)
+        if same_shape:
+            matrices = [matrices[..., i, :, :] for i in range(num_mats)]
+        else:
+            matrices = list(matrices)
         if real_vec[0]:
             matrices = [bnd_vecs[0][..., None, :]] + matrices
         if real_vec[1]:
             matrices.append(bnd_vecs[1][..., None])
 
         # Compute product sequentially and strip away dummy dimensions
-        product = matvec_reduce_seq(matrices)
+        product = mat_reduce_seq(matrices)
         if real_vec[0]:
             product.squeeze_(-2)
         if real_vec[1]:
             product.squeeze_(-1)
-        
+
     return product
 
 
@@ -147,7 +152,6 @@ def mat_reduce_par(matrices: Tensor) -> Tensor:
         prod_mat: Product of input matrices
     """
     assert matrices.ndim >= 3
-    assert matrices.shape[-2] == matrices.shape[-1]
     s_dim = -3  # Dimension which has spatial arrangement of matrices
     n_mats = matrices.shape[s_dim]
     num_batch = matrices.ndim - 3
@@ -157,8 +161,11 @@ def mat_reduce_par(matrices: Tensor) -> Tensor:
         eye = torch.eye(matrices.shape[-1], dtype=matrices.dtype)
         matrices, _ = batch_broadcast((eye, matrices), (2, 3))
         return matrices
+    elif n_mats == 1:
+        return matrices.squeeze(dim=s_dim)
 
     # Iteratively multiply pairs of matrices until there is only one left
+    assert matrices.shape[-2] == matrices.shape[-1]
     while n_mats > 1:
         odd_n = n_mats % 2 == 1
         half_n = n_mats // 2

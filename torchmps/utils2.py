@@ -44,7 +44,28 @@ def bundle_tensors(tensors: TensorSeq, dim: int = 0) -> TensorSeq:
     if len(set(t.shape for t in tensors)) > 1 or len(tensors) == 0:
         return tensors
     else:
-        return torch.stack(tensors)
+        return torch.stack(tensors, dim=dim)
+
+
+def batch_to(tensor: Tensor, batch_shape: tuple, num_nonbatch: int):
+    """
+    Expand give tensor via broadcasting to have given batch dimensions
+
+    Args:
+        tensor: Tensor whose batch indices are being expanded.
+        batch_shape: Shape to which the batch indices of `tensor` will be
+            expanded to. If the batch indices of `tensor` is incompatible
+            with `batch_shape`, then `batch_to` will throw an error.
+        num_nonbatch: Integer describing the number of non-batch indices
+            in `tensor`. Non-batch indices are assumed to be the
+            right-most indices `tensor`.
+
+    Returns:
+        out_tensor: Broadcasted version of input tensor.
+    """
+    batch_ref = torch.empty(batch_shape)
+    out_tensor, _ = batch_broadcast((tensor, batch_ref), (num_nonbatch, 0))
+    return out_tensor
 
 
 def batch_broadcast(tens_list: Sequence[Tensor], num_nonbatch: Sequence[int]):
@@ -94,8 +115,10 @@ def batch_broadcast(tens_list: Sequence[Tensor], num_nonbatch: Sequence[int]):
         t[(None,) * (bdims + nnb - t.ndim)] for t, nnb in zip(tens_list, num_nonbatch)
     ]
     shapes = [full_batch + t.shape[bdims:] for t in tens_list]
+    safe_expand = lambda t, shp: (t if len(shp) == 0 else t.expand(*shp))
+    out_list = tuple(safe_expand(t, shp) for t, shp in zip(tens_list, shapes))
 
-    return tuple(t.expand(*shp) for t, shp in zip(tens_list, shapes))
+    return out_list
 
 
 def shape_broadcast(shape_list: Sequence[tuple]):
