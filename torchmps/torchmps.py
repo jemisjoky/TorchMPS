@@ -7,9 +7,8 @@ import math
 import torch
 import torch.nn as nn
 
-from stensor import stensor
-from utils import init_tensor, svd_flex
-from contractables import (
+from .utils import init_tensor, svd_flex
+from .contractables import (
     SingleMat,
     MatRegion,
     OutputCore,
@@ -126,20 +125,20 @@ class TI_MPS(nn.Module):
         Converts input list of sequences into a single batch sequence tensor.
 
         If input is already a batch tensor, it is returned unchanged. Otherwise,
-        convert input list into a batch sequence with shape [batch_size, length, 
+        convert input list into a batch sequence with shape [batch_size, length,
         feature_dim].
 
         If self.use_bias = self.fixed_bias = True, then sequences of different
-        lengths can be used, in which case shorter sequences are padded with 
+        lengths can be used, in which case shorter sequences are padded with
         zeros at the end, making the batch tensor length equal to the length
         of the longest input sequence.
 
         Args:
-            input_data: A tensor of shape [batch_size, length] or 
-            [batch_size, length, feature_dim], or a list of length batch_size, 
-            whose i'th item is a tensor of shape [length_i, feature_dim] or 
-            [length_i]. If self.use_bias or self.fixed_bias are False, then 
-            length_i must be the same for all i. 
+            input_data: A tensor of shape [batch_size, length] or
+            [batch_size, length, feature_dim], or a list of length batch_size,
+            whose i'th item is a tensor of shape [length_i, feature_dim] or
+            [length_i]. If self.use_bias or self.fixed_bias are False, then
+            length_i must be the same for all i.
         """
         feature_dim = self.feature_dim
 
@@ -280,47 +279,47 @@ class MPS(nn.Module):
     """
     Tunable MPS model giving mapping from fixed-size data to output vector
 
-    Model works by first converting each 'pixel' (local data) to feature 
-    vector via a simple embedding, then contracting embeddings with inputs 
-    to each MPS cores. The resulting transition matrices are contracted 
+    Model works by first converting each 'pixel' (local data) to feature
+    vector via a simple embedding, then contracting embeddings with inputs
+    to each MPS cores. The resulting transition matrices are contracted
     together along bond dimensions (i.e. hidden state spaces), with output
     produced via an uncontracted edge of an additional output core.
 
-    MPS model permits many customizable behaviors, including custom 
-    'routing' of MPS through the input, choice of boundary conditions 
-    (meaning the model can act as a tensor train or a tensor ring), 
+    MPS model permits many customizable behaviors, including custom
+    'routing' of MPS through the input, choice of boundary conditions
+    (meaning the model can act as a tensor train or a tensor ring),
     GPU-friendly parallel evaluation, and an experimental mode to support
     adaptive choice of bond dimensions based on singular value spectrum.
 
     Args:
         input_dim:       Number of 'pixels' in the input to the MPS
         output_dim:      Size of the vectors output by MPS via output core
-        bond_dim:        Dimension of the 'bonds' connecting adjacent MPS 
-                         cores, which act as hidden state spaces of the 
-                         model. In adaptive mode, bond_dim instead 
+        bond_dim:        Dimension of the 'bonds' connecting adjacent MPS
+                         cores, which act as hidden state spaces of the
+                         model. In adaptive mode, bond_dim instead
                          specifies the maximum allowed bond dimension
         feature_dim:     Size of the local feature spaces each pixel is
                          embedded into (default: 2)
-        periodic_bc:     Whether MPS has periodic boundary conditions (i.e. 
-                         is a tensor ring) or open boundary conditions 
+        periodic_bc:     Whether MPS has periodic boundary conditions (i.e.
+                         is a tensor ring) or open boundary conditions
                          (i.e. is a tensor train) (default: False)
-        parallel_eval:   Whether contraction of tensors is performed in a 
-                         serial or parallel fashion. The former is less 
-                         expensive for open boundary conditions, but 
+        parallel_eval:   Whether contraction of tensors is performed in a
+                         serial or parallel fashion. The former is less
+                         expensive for open boundary conditions, but
                          parallelizes more poorly (default: False)
         label_site:      Location in the MPS chain where output is placed
                          (default: input_dim // 2)
         path:            List specifying a path through the input data
                          which MPS is 'routed' along. For example, choosing
-                         path=[0, 1, ..., input_dim-1] gives a standard 
-                         in-order traversal (behavior when path=None), while 
-                         path=[0, 2, ..., input_dim-1] specifies an MPS 
-                         accepting input only from even-valued input pixels 
+                         path=[0, 1, ..., input_dim-1] gives a standard
+                         in-order traversal (behavior when path=None), while
+                         path=[0, 2, ..., input_dim-1] specifies an MPS
+                         accepting input only from even-valued input pixels
                          (default: None)
-        init_std:        Size of the Gaussian noise used in default 
+        init_std:        Size of the Gaussian noise used in default
                          near-identity initialization (default: 1e-9)
         initializer:     Pytorch initializer for custom initialization of
-                         MPS cores, with None specifying default 
+                         MPS cores, with None specifying default
                          near-identity initialization (default: None)
         use_bias:        Whether to use trainable bias matrices in MPS
                          cores, which are initialized near the zero matrix
@@ -329,8 +328,8 @@ class MPS(nn.Module):
                          bond dimensions selection (default: False)
         cutoff:          Singular value cutoff controlling bond dimension
                          adaptive selection (default: 1e-9)
-        merge_threshold: Number of inputs before adaptive MPS shifts its 
-                         merge state once, with two shifts leading to the 
+        merge_threshold: Number of inputs before adaptive MPS shifts its
+                         merge state once, with two shifts leading to the
                          update of all bond dimensions (default: 2000)
     """
 
@@ -465,13 +464,13 @@ class MPS(nn.Module):
                                  [batch_size, input_dim, feature_dim]. In the
                                  former case, the data points are turned into
                                  2D vectors using a default linear feature map.
-                                 
+
                                  When using a user-specified path, the size of
                                  the second tensor mode need not exactly equal
                                  input_dim, since the path variable is used to
                                  slice a certain subregion of input_data. This
-                                 can be used to define multiple MPS 'strings', 
-                                 which act on different parts of the input. 
+                                 can be used to define multiple MPS 'strings',
+                                 which act on different parts of the input.
         """
         # For custom paths, rearrange our input into the desired order
         if self.path:
@@ -776,7 +775,7 @@ class MergedLinearRegion(LinearRegion):
         """
         Convert unmerged modules in self.module_list to merged counterparts
 
-        Calling _merge (or _unmerge) directly can cause undefined behavior, 
+        Calling _merge (or _unmerge) directly can cause undefined behavior,
         but see MergedLinearRegion.forward for intended use
 
         This proceeds by first merging all unmerged cores internally, then
@@ -858,7 +857,7 @@ class MergedLinearRegion(LinearRegion):
         """
         Convert merged modules to unmerged counterparts
 
-        Calling _unmerge (or _merge) directly can cause undefined behavior, 
+        Calling _unmerge (or _merge) directly can cause undefined behavior,
         but see MergedLinearRegion.forward for intended use
 
         This proceeds by first unmerging all merged cores internally, then
@@ -1444,7 +1443,7 @@ class InitialVector(nn.Module):
     specified then only the first fill_dim entries are set to one, with the
     rest zero.
 
-    If fixed_vec is False, then the initial vector will be registered as a 
+    If fixed_vec is False, then the initial vector will be registered as a
     trainable model parameter.
     """
 
@@ -1483,9 +1482,9 @@ class TerminalOutput(nn.Module):
     """
     Output matrix at end of chain to transmute virtual state into output vector
 
-    By default, a fixed rectangular identity matrix with shape 
+    By default, a fixed rectangular identity matrix with shape
     [bond_dim, output_dim] will be used as a state transducer. If fixed_mat is
-    False, then the matrix will be registered as a trainable model parameter. 
+    False, then the matrix will be registered as a trainable model parameter.
     """
 
     def __init__(self, bond_dim, output_dim, fixed_mat=False, is_left_mat=False):
