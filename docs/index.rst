@@ -16,7 +16,7 @@ Contents:
 Some Autodoc Stuff
 ==================
 
-.. autoclass:: torchmps.MPS
+.. autoclass:: torchmps.torchmps.MPS
 
 
 

@@ -17,7 +17,7 @@ setuptools.setup(
     version=version,
     author="Jacob Miller",
     author_email="jmjacobmiller@gmail.com",
-    description="Pytorch library for manipulating matrix product states",
+    description="Pytorch library for matrix product state models",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/jemisjoky/TorchMPS",
