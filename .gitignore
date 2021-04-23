@@ -13,3 +13,6 @@ Pipfile.lock
 __pycache__/
 .hypothesis/
 sublime/
+
+# Misc. files
+.coverage

@@ -173,21 +173,21 @@ def init_tensor(shape, bond_str, init_method):
 
         init_method: The method used to initialize the entries of our tensor.
                      This can be either a string, or else a tuple whose first
-                     entry is an initialization method and whose remaining 
+                     entry is an initialization method and whose remaining
                      entries are specific to that method. In each case, std
-                     will always refer to a standard deviation for a random 
-                     normal random component of each entry of the tensor. 
+                     will always refer to a standard deviation for a random
+                     normal random component of each entry of the tensor.
 
                      Allowed options are:
-                        * ('random_eye', std): Initialize each tensor input 
+                        * ('random_eye', std): Initialize each tensor input
                             slice close to the identity
-                        * ('random_zero', std): Initialize each tensor input 
+                        * ('random_zero', std): Initialize each tensor input
                             slice close to the zero matrix
-                        * ('min_random_eye', std, init_dim): Initialize each 
-                            tensor input slice close to a truncated identity 
-                            matrix, whose truncation leaves init_dim unit 
+                        * ('min_random_eye', std, init_dim): Initialize each
+                            tensor input slice close to a truncated identity
+                            matrix, whose truncation leaves init_dim unit
                             entries on the diagonal. If init_dim is larger
-                            than either of the bond dimensions, then init_dim 
+                            than either of the bond dimensions, then init_dim
                             is capped at the smaller bond dimension.
     """
     # Unpack init_method if it is a tuple
@@ -270,7 +270,7 @@ def onehot(labels, max_value):
 
 def joint_shuffle(input_data, input_labels):
     """
-    Shuffle input data and labels in a joint manner, so each label points to 
+    Shuffle input data and labels in a joint manner, so each label points to
     its corresponding datum. Works for both regular and CUDA tensors
     """
     assert input_data.is_cuda == input_labels.is_cuda
