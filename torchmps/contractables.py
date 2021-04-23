@@ -6,19 +6,19 @@ class Contractable:
     Container for tensors with labeled indices and a global batch size
 
     The labels for our indices give some high-level knowledge of the tensor
-    layout, and permit the contraction of pairs of indices in a more 
-    systematic manner. However, much of the actual heavy lifting is done 
+    layout, and permit the contraction of pairs of indices in a more
+    systematic manner. However, much of the actual heavy lifting is done
     through specific contraction routines in different subclasses
 
     Attributes:
         tensor (Tensor):    A Pytorch tensor whose first index is a batch
-                            index. Sub-classes of Contractable may put other 
+                            index. Sub-classes of Contractable may put other
                             restrictions on tensor
-        bond_str (str):     A string whose letters each label a separate mode 
-                            of our tensor, and whose length equals the order 
+        bond_str (str):     A string whose letters each label a separate mode
+                            of our tensor, and whose length equals the order
                             (number of modes) of our tensor
         global_bs (int):    The batch size associated with all Contractables.
-                            This is shared between all Contractable instances 
+                            This is shared between all Contractable instances
                             and allows for automatic expanding of tensors
     """
 
@@ -237,7 +237,7 @@ class MatRegion(Contractable):
     """
     A contiguous collection of matrices which are multiplied together
 
-    The input tensor defining our MatRegion must have shape 
+    The input tensor defining our MatRegion must have shape
     [batch_size, num_mats, D, D], or [num_mats, D, D] when the global batch
     size is already known
     """
@@ -288,7 +288,7 @@ class MatRegion(Contractable):
         """
         Multiplies together all matrices and returns resultant SingleMat
 
-        This method uses iterated batch multiplication to evaluate the full 
+        This method uses iterated batch multiplication to evaluate the full
         matrix product in depth O( log(num_mats) )
         """
         mats = self.tensor
@@ -386,8 +386,8 @@ class EdgeVec(Contractable):
     """
     A batch of vectors associated with an edge of our MPS
 
-    EdgeVec instances are always associated with an edge of an MPS, which 
-    requires the is_left_vec flag to be set to True (vector on left edge) or 
+    EdgeVec instances are always associated with an edge of an MPS, which
+    requires the is_left_vec flag to be set to True (vector on left edge) or
     False (vector on right edge)
     """
 
