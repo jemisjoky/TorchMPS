@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Basic MPS functions used for uniform and non-uniform models"""
-from typing import Union, Tuple, Sequence, Optional
+from typing import Union, Sequence, Optional
 
 import torch
 from torch import Tensor
@@ -154,7 +154,6 @@ def mat_reduce_par(matrices: Tensor) -> Tensor:
     assert matrices.ndim >= 3
     s_dim = -3  # Dimension which has spatial arrangement of matrices
     n_mats = matrices.shape[s_dim]
-    num_batch = matrices.ndim - 3
 
     # In case of empty collection of matrices, return the identity
     if n_mats == 0:
@@ -167,7 +166,6 @@ def mat_reduce_par(matrices: Tensor) -> Tensor:
     # Iteratively multiply pairs of matrices until there is only one left
     assert matrices.shape[-2] == matrices.shape[-1]
     while n_mats > 1:
-        odd_n = n_mats % 2 == 1
         half_n = n_mats // 2
         floor_n = half_n * 2
 
