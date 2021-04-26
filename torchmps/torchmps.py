@@ -2,8 +2,6 @@
 TODO:
     (1) Update master to include all the new features in dynamic_capacity
 """
-import math
-
 import torch
 import torch.nn as nn
 
@@ -332,15 +330,11 @@ class MPS(nn.Module):
                          merge state once, with two shifts leading to the
                          update of all bond dimensions (default: 2000)
     """
-
-    """
-    MPS TODOS
-        * Support arbitrary initializers
-        * Clean up the current treatment of initialization
-        * Resolve weirdness with fixed bias and initialization choice
-        * Add function to convert to canonical form
-        * Fix issue of no training when use_bias=False  
-    """
+    # TODO: Support arbitrary initializers
+    # TODO: Clean up the current treatment of initialization
+    # TODO: Resolve weirdness with fixed bias and initialization choice
+    # TODO: Add function to convert to canonical form
+    # TODO: Fix issue of no training when use_bias=False
 
     def __init__(
         self,
@@ -524,8 +518,6 @@ class MPS(nn.Module):
                     f"{list(input_data.shape)}, feature_dim = {self.feature_dim})"
                 )
             return input_data
-
-        embedded_shape = list(input_data.shape) + [self.feature_dim]
 
         # Apply a custom embedding map if it has been defined by the user
         if self.feature_map is not None:
@@ -1056,7 +1048,6 @@ class InputRegion(nn.Module):
 
         # If we're using bias matrices, add those here
         if self.use_bias:
-            bond_dim = tensor.size(1)
             bias_mat = self.bias_mat.unsqueeze(0)
             mats = mats + bias_mat.expand_as(mats)
 
@@ -1147,7 +1138,7 @@ class MergedInput(nn.Module):
 
     def __init__(self, tensor):
         # Check that our input tensor has the correct shape
-        bond_str = "slrij"
+        # bond_str = "slrij"
         shape = tensor.shape
         assert len(shape) == 5
         assert shape[1] == shape[2]
@@ -1191,7 +1182,7 @@ class MergedInput(nn.Module):
         original MergedInput (same number of inputs), but its core_len will
         be doubled (twice as many individual cores)
         """
-        bond_str = "slrij"
+        # bond_str = "slrij"
         tensor = self.tensor
         svd_string = "lrij->lui,urj"
         max_D = tensor.size(1)
@@ -1347,7 +1338,7 @@ class MergedOutput(nn.Module):
 
     def __init__(self, tensor, left_output):
         # Check that our input tensor has the correct shape
-        bond_str = "olri"
+        # bond_str = "olri"
         assert len(tensor.shape) == 4
         super().__init__()
 
@@ -1380,7 +1371,7 @@ class MergedOutput(nn.Module):
         the SVD cutoff, but will generally be padded with zeros to give the
         new index a regular size.
         """
-        bond_str = "olri"
+        # bond_str = "olri"
         tensor = self.tensor
         left_output = self.left_output
         if left_output:

@@ -263,7 +263,6 @@ class MatRegion(Contractable):
 
         mats = self.tensor
         num_mats = mats.size(1)
-        batch_size = mats.size(0)
 
         # Load our vector and matrix batches
         dummy_ind = 1 if rmul else 2
@@ -271,7 +270,6 @@ class MatRegion(Contractable):
         mat_list = [mat.squeeze(1) for mat in torch.chunk(mats, num_mats, 1)]
 
         # Do the repeated matrix-vector multiplications in the proper order
-        log_norm = 0
         for i, mat in enumerate(mat_list[:: (1 if rmul else -1)], 1):
             if rmul:
                 vec = torch.bmm(vec, mat)
@@ -293,7 +291,6 @@ class MatRegion(Contractable):
         """
         mats = self.tensor
         shape = list(mats.shape)
-        batch_size = mats.size(0)
         size, D = shape[1:3]
 
         # Iteratively multiply pairs of matrices until there is only one

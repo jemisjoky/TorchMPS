@@ -14,10 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Tests for utility functions"""
-import pytest
-
 import torch
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, strategies as st
 
 from torchmps.utils2 import batch_broadcast, batch_to
 

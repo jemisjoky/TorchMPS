@@ -18,7 +18,7 @@ import pytest
 from math import sqrt
 
 import torch
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, strategies as st
 
 from torchmps.mps_base import contract_matseq
 from torchmps.utils2 import batch_broadcast, batch_to
@@ -96,7 +96,8 @@ def test_contract_matseq_identity_batches(
     else:
         lib_result2 = contract_matseq(eye_mats2, lvec, rvec, parallel_eval)
 
-    # Both ways of calling contract_matseq should agree, except for empty matrix sequences
+    # Both ways of calling contract_matseq should agree,
+    # except for empty matrix sequences
     if not torch.equal(lib_result, lib_result2):
         assert seq_len == 0
         assert lib_result.ndim > lib_result2.ndim

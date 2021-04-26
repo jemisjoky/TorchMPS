@@ -133,12 +133,12 @@ def shape_broadcast(shape_list: Sequence[tuple]):
     Returns:
         b_shape: Broadcasted shape of those input in `shape_list`
     """
-    ml = max(shape_list, key=len)
-    out = list(ml)
-    for l in shape_list:
-        if l is ml:
+    max_shp = max(shape_list, key=len)
+    out = list(max_shp)
+    for shp in shape_list:
+        if shp is max_shp:
             continue
-        for i, x in enumerate(l, -len(l)):
+        for i, x in enumerate(shp, -len(shp)):
             if x != 1 and x != out[i]:
                 if out[i] != 1:
                     raise ValueError
