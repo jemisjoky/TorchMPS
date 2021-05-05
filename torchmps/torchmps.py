@@ -330,6 +330,7 @@ class MPS(nn.Module):
                          merge state once, with two shifts leading to the
                          update of all bond dimensions (default: 2000)
     """
+
     # TODO: Support arbitrary initializers
     # TODO: Clean up the current treatment of initialization
     # TODO: Resolve weirdness with fixed bias and initialization choice
