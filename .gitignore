@@ -5,10 +5,6 @@ docs/_build/
 torchmps.egg-info/
 pyproject.toml
 
-# Pipenv files
-Pipfile
-Pipfile.lock
-
 # Misc. local folders
 __pycache__/
 .hypothesis/

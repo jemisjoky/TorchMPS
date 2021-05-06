@@ -14,12 +14,13 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Basic MPS functions used for uniform and non-uniform models"""
+import warnings
 from typing import Union, Sequence, Optional
 
 import torch
 from torch import Tensor
 
-from torchmps.utils2 import bundle_tensors, batch_broadcast
+from torchmps.utils2 import bundle_tensors, batch_broadcast, batch_to, phaseify
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -30,7 +31,7 @@ def contract_matseq(
     right_vec: Optional[Tensor] = None,
     parallel_eval: bool = False,
 ) -> Tensor:
-    """
+    r"""
     Matrix-multiply sequence of matrices with optional boundary vectors
 
     The output is a single matrix, or a vector/scalar if one/both boundary
@@ -73,8 +74,10 @@ def contract_matseq(
     assert num_vecs <= 2
 
     # Convert matrices to single batch tensor, provided all shapes agree
-    matrices = bundle_tensors(matrices, dim=-3)
     same_shape = isinstance(matrices, Tensor)
+    if not same_shape:
+        matrices = bundle_tensors(matrices, dim=-3)
+        same_shape = isinstance(matrices, Tensor)
     num_mats = matrices.shape[-3] if same_shape else len(matrices)
 
     # Decide whether to use parallel evaluation algorithm
@@ -205,3 +208,46 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
 
     # Revert to original form before returning
     return product.transpose(-2, -1) if r2l else product
+
+
+def get_mat_slices(seq_input: Tensor, core_tensor: Tensor):
+    """
+    Use sequential input and core tensor to get sequence of matrix slices
+    """
+    pass
+
+
+def near_eye_init(shape: tuple, is_complex: bool, noise: float = 1e-3) -> Tensor:
+    """
+    Initialize an MPS core tensor with all slices close to identity matrix
+
+    Args:
+        shape: Shape of the core tensor being initialized.
+        is_complex: Whether to initialize a complex core tensor.
+        noise: Normalized noise value setting stdev around identity matrix.
+            Default: 1e-3
+
+    Returns:
+        core_tensor: Randomly initialized near-identity core tensor.
+    """
+    # Check shape and do something if core slices are non-square
+    assert len(shape) >= 3
+    if shape[-2] != shape[-1]:
+        if torch.prod(torch.tensor(shape[:-3])) != 1:
+            raise ValueError(
+                "Batch core tensor with non-square matrix slices "
+                "requested, this probably isn't what you wanted"
+            )
+        else:
+            warnings.warn(
+                "Core tensor with non-square matrix slices "
+                "requested, is this really what you wanted?"
+            )
+
+    # Initialize core using size-adjusted value of noise
+    eye_core = batch_to(torch.eye(*shape[-2:]), shape[:-2], 2)
+    noise = noise / torch.sqrt(torch.prod(torch.tensor(shape[-2:])))
+    delta = noise * torch.randn(*shape)
+    if is_complex:
+        delta = phaseify(delta)
+    return eye_core + delta
