@@ -14,6 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Utility functions"""
+from math import pi
 from typing import Union, Sequence
 
 import torch
@@ -111,11 +112,13 @@ def batch_broadcast(tens_list: Sequence[Tensor], num_nonbatch: Sequence[int]):
         )
 
     # Add singletons and expand batch dims of each tensor
+    def safe_expand(t, shp):
+        return t if len(shp) == 0 else t.expand(*shp)
+
     tens_list = [
         t[(None,) * (bdims + nnb - t.ndim)] for t, nnb in zip(tens_list, num_nonbatch)
     ]
     shapes = [full_batch + t.shape[bdims:] for t in tens_list]
-    safe_expand = lambda t, shp: (t if len(shp) == 0 else t.expand(*shp))
     out_list = tuple(safe_expand(t, shp) for t, shp in zip(tens_list, shapes))
 
     return out_list
@@ -125,7 +128,9 @@ def shape_broadcast(shape_list: Sequence[tuple]):
     """
     Predict shape of broadcasted tensors with given input shapes
 
-    Code based on Stack Overflow post `here <https://stackoverflow.com/questions/54859286/is-there-a-function-that-can-apply-numpys-broadcasting-rules-to-a-list-of-shape/>`_
+    Code based on Stack Overflow post `here <https://stackoverflow.com/question
+    s/54859286/is-there-a-function-that-can-apply-numpys-broadcasting-rules-to-
+    a-list-of-shape/>`_
 
     Args:
         shape_list: Sequence of shapes, each input as a tuple
@@ -144,3 +149,10 @@ def shape_broadcast(shape_list: Sequence[tuple]):
                     raise ValueError
                 out[i] = x
     return tuple(out)
+
+
+def phaseify(tensor: Tensor) -> Tensor:
+    """
+    Convert real tensor into complex one with random complex phases
+    """
+    return tensor * torch.exp(2j * pi * torch.rand_like(tensor))
