@@ -19,7 +19,12 @@
 import torch
 from torch import Tensor, nn
 
-from torchmps.mps_base import contract_matseq, near_eye_init, get_mat_slices
+from torchmps.mps_base import (
+    contract_matseq,
+    near_eye_init,
+    get_mat_slices,
+    get_log_norm,
+)
 from torchmps.utils2 import phaseify
 
 # TensorSeq = Union[Tensor, Sequence[Tensor]]
@@ -122,9 +127,12 @@ class ProbMPS(nn.Module):
         """
         # TODO: Convert input to STensors first
 
-        # Contract inputs with core tensors then contract along bond
-        # dimensions to get unnormalized probability _amplitudes_
+        # Contract inputs with core tensors and add bias matrices
         mat_slices = get_mat_slices(input_data, self.core_tensors)
+        if self.use_bias:
+            mat_slices = mat_slices + self.bias_mat[None, None]
+
+        #  Contract all bond dims to get (unnormalized) prob amplitudes
         psi_vals = contract_matseq(
             mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
         )
@@ -155,12 +163,19 @@ class ProbMPS(nn.Module):
         where :math:`\psi` is the n'th order tensor described by the
         contraction of MPS parameter cores. In the Born machine paradigm,
         this is also :math:`\log(Z)`, for :math:`Z` the normalization
-        constant for the probability
+        constant for the probability.
 
         Returns:
-            l_norm: Scalar value giving
+            l_norm: Scalar value giving the log squared L2 norm of the
+                n'th order prob. amp. tensor described by the MPS.
         """
-        cores = self.core_tensors
+        # Account for bias matrices before calling log norm implementation
+        if self.use_bias:
+            core_tensors = self.core_tensors + self.bias_mat[None, None]
+        else:
+            core_tensors = self.core_tensors
+
+        return get_log_norm(core_tensors, self.edge_vecs)
 
     @property
     def seq_len(self):

@@ -233,7 +233,8 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
     input_dim, bond_dim = core_tensor.shape[-3:-1]
     seq_len = len(seq_input)
 
-    # TODO: Deal with packing if/when we have variable-len sequences
+    # TODO: Deal with packing if/when we have variable-len sequences,
+    #       likely using pad_mat_slices function
 
     # Perform the indexing/contraction on a case-by-case basis
     if indexing and uniform:
@@ -247,6 +248,84 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
         mat_slices = einsum("tbi,tidd,->tbdd", seq_input, core_tensor)
 
     return mat_slices
+
+
+def get_log_norm(
+    core_tensor: Tensor, boundary_vecs: Tensor, length: Optional[int] = None
+) -> Tensor:
+    r"""
+    Compute the log (squared) L2 norm of tensor described by MPS model
+
+    Uses iterated tensor contraction to compute :math:`\log(|\psi|^2)`,
+    where :math:`\psi` is the n'th order tensor arising from contracting
+    all MPS core tensors and boundary vectors together. In the Born machine
+    paradigm this is equivalently :math:`\log(Z)`, with :math:`Z` the
+    normalization constant for the probability.
+
+    Can be used to compute fixed-len log norms as well as arbitrary-len
+    log norms, for the case of uniform MPS. The latter case is the log of
+    the sum of all len-n squared norms, for :math:`n = 0, 1, \ldots`.
+    Non-convergent core tensors
+
+    Args:
+        core_tensor: Either single core tensor of shape `(input_dim, D, D)`
+            or core tensor sequence of shape `(seq_len, input_dim, D, D)`,
+            for `D` the bond dimension of the MPS.
+        boundary_vecs: Matrix of shape `(2, D)` whose 0th/1st columns give
+            the left/right boundary vectors of the MPS.
+        length: In case of single core tensor, specifies the length for
+            which the log L2 norm is computed. Non-negative values give
+            fixed-len log norms, while -1 gives arbitrary-len log norm.
+            Default: ``None``
+
+    Returns:
+        l_norm: Scalar value giving the log squared L2 norm of the
+            probability amplitude tensor described by the MPS.
+    """
+    # Determine whether normalization is fixed-len or arbitrary-len
+    uniform = core_tensor.ndim == 3
+    assert core_tensor.ndim in (3, 4)
+    assert boundary_vecs.shape[-1] == core_tensor.shape[-1]
+    assert uniform or length in (None, core_tensor.shape[0])
+    assert not (uniform and length is None)
+    fixed_len = not uniform or length != -1
+
+    # Initialize all variables needed for log norm calculation
+    uniform = core_tensor.ndim == 3
+    left_vec, r_vec = boundary_vecs
+    dens_mat = left_vec[:, None] @ left_vec[None, :].conj()
+    log_sum = torch.tensor(-float("inf"))
+    log_norm = torch.zeros(())
+    if uniform:
+        core_tensor = (core_tensor,) * length
+
+    # Function for applying rightward transfer operator to density mat
+    def transfer_op(core_t, d_mat, l_norm, l_sum=None):
+        # Update density operator, rescale to have unit trace
+        d_mat = einsum("ilr,lp,ipq->rq", core_t, d_mat, core_t.conj())
+        trace = torch.trace(d_mat)
+        l_norm = l_norm + torch.log(trace)
+        d_mat = d_mat / trace
+
+        if fixed_len:
+            return d_mat, l_norm
+        else:
+            # Get new contribution to log L2 norm for variable-len case
+            this_norm = einsum("r,rq,q->", r_vec, d_mat, r_vec.conj())
+            new_lnorm = torch.log(this_norm) + l_norm
+            l_sum = torch.logsumexp(torch.stack((l_sum, new_lnorm)))
+            return d_mat, l_norm, l_sum
+
+    if fixed_len:
+        # Apply transfer operator `length` times, then add final correction
+        for core in core_tensor:
+            dens_mat, log_norm = transfer_op(core, dens_mat, log_norm)
+        log_c = torch.log(einsum("r,rq,q->", r_vec, dens_mat, r_vec.conj()))
+
+        return log_norm + log_c
+    else:
+        # Deal with the more intricate arbitrary-len calculation
+        raise NotImplementedError
 
 
 # TODO: Complete this after variable-len data format is better figured out
