@@ -20,7 +20,7 @@ from typing import Union, Sequence, Optional
 import torch
 from torch import Tensor
 
-from torchmps.utils2 import bundle_tensors, batch_broadcast, batch_to, phaseify
+from torchmps.utils2 import bundle_tensors, batch_broadcast, batch_to, phaseify, einsum
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -50,7 +50,7 @@ def contract_matseq(
     Shapes described below neglect these additional batch indices.
 
     Args:
-        matrices: Single tensor of shape (L, D, D), or sequence of
+        matrices: Single tensor of shape `(L, D, D)`, or sequence of
             matrices with compatible shapes :math:`(D_i, D_{i+1})`, for
             :math:`i = 0, 1, \ldots, L`.
         left_vec: Left boundary vector with shape `(D_0,)`, or None if no
@@ -84,9 +84,8 @@ def contract_matseq(
     use_parallel = same_shape and (parallel_eval or num_vecs == 0)
 
     # Broadcast batch dimensions of matrices and boundary vectors
-    if num_vecs == 0:
-        if not same_shape:
-            matrices = batch_broadcast(matrices, (2,) * num_mats)
+    if num_vecs == 0 and not same_shape:
+        matrices = batch_broadcast(matrices, (2,) * num_mats)
     elif num_vecs == 1:
         v_ind = real_vec.index(True)
         vec = bnd_vecs[v_ind]
@@ -96,13 +95,12 @@ def contract_matseq(
             outs = batch_broadcast((vec,) + tuple(matrices), (1,) + (2,) * num_mats)
             vec, matrices = outs[0], outs[1:]
         bnd_vecs[v_ind] = vec
-    else:
-        if same_shape:
-            outs = batch_broadcast(bnd_vecs + [matrices], (1, 1, 3))
-            bnd_vecs, matrices = outs[:2], outs[2]
-        else:
-            outs = batch_broadcast(bnd_vecs + list(matrices), (1, 1) + (2,) * num_mats)
-            bnd_vecs, matrices = outs[:2], outs[2:]
+    elif num_vecs == 2 and same_shape:
+        outs = batch_broadcast(bnd_vecs + [matrices], (1, 1, 3))
+        bnd_vecs, matrices = outs[:2], outs[2]
+    elif num_vecs == 2 and not same_shape:
+        outs = batch_broadcast(bnd_vecs + list(matrices), (1, 1) + (2,) * num_mats)
+        bnd_vecs, matrices = outs[:2], outs[2:]
 
     if use_parallel:
         # Reduce product of all matrices in parallel
@@ -210,10 +208,49 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
     return product.transpose(-2, -1) if r2l else product
 
 
-def get_mat_slices(seq_input: Tensor, core_tensor: Tensor):
+def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
     """
     Use sequential input and core tensor to get sequence of matrix slices
+
+    Args:
+        seq_input: Tensor with shape `(seq_len, batch)` for discrete input
+            sequences, or `(seq_len, batch, input_dim)` for vector input
+            sequences.
+        core_tensor: Tensor with shape `(input_dim, bond_dim, bond_dim)`
+            for uniform MPS or `(seq_len, input_dim, bond_dim, bond_dim)`
+            for fixed-length MPS.
+
+    Returns:
+        mat_slices: Tensor with shape `(seq_len, batch, bond_dim, bond_dim)`,
+            containing all transition matrix core slices of `core_tensor`
+            relative to data in `seq_input`.
     """
+    # Set flags for which case we're dealing with
+    assert seq_input.ndim in (2, 3)
+    assert core_tensor.ndim in (3, 4)
+    indexing = seq_input.ndim == 2
+    uniform = core_tensor.ndim == 3
+    input_dim, bond_dim = core_tensor.shape[-3:-1]
+    seq_len = len(seq_input)
+
+    # TODO: Deal with packing if/when we have variable-len sequences
+
+    # Perform the indexing/contraction on a case-by-case basis
+    if indexing and uniform:
+        mat_slices = core_tensor[seq_input]
+    elif indexing and not uniform:
+        # Indexing equivalent of the einsum operation at bottom
+        mat_slices = core_tensor[torch.arange(seq_len)[:, None], seq_input]
+    elif not indexing and uniform:
+        mat_slices = einsum("tbi,idd,->tbdd", seq_input, core_tensor)
+    elif not indexing and not uniform:
+        mat_slices = einsum("tbi,tidd,->tbdd", seq_input, core_tensor)
+
+    return mat_slices
+
+
+# TODO: Complete this after variable-len data format is better figured out
+def pad_mat_slices():
     pass
 
 

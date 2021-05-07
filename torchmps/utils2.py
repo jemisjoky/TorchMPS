@@ -15,6 +15,7 @@
 
 """Utility functions"""
 from math import pi
+from functools import partial
 from typing import Union, Sequence
 
 import torch
@@ -156,3 +157,12 @@ def phaseify(tensor: Tensor) -> Tensor:
     Convert real tensor into complex one with random complex phases
     """
     return tensor * torch.exp(2j * pi * torch.rand_like(tensor))
+
+
+# Load a good einsum function
+try:
+    import opt_einsum
+
+    einsum = partial(opt_einsum.contract, backend="torch")
+except ModuleNotFoundError:
+    einsum = torch.einsum
