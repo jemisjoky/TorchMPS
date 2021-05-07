@@ -120,7 +120,17 @@ class ProbMPS(nn.Module):
             log_probs: Vector with shape `(batch,)` giving the natural
                 logarithm of the probability of each input sequence.
         """
-        pass
+        # TODO: Convert input to STensors first
+
+        # Contract inputs with core tensors then contract along bond
+        # dimensions to get unnormalized probability _amplitudes_
+        mat_slices = get_mat_slices(input_data, self.core_tensors)
+        psi_vals = contract_matseq(
+            mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
+        )
+
+        # Convert to unnormalized log probabilities, then normalize
+        return 2 * torch.log(torch.abs(psi_vals)) - self.log_norm()
 
     def loss(self, input_data: Tensor) -> Tensor:
         """
@@ -136,6 +146,21 @@ class ProbMPS(nn.Module):
                 likelihood loss of all sequences in input batch.
         """
         return -torch.mean(self.forward(input_data))
+
+    def log_norm(self) -> Tensor:
+        r"""
+        Compute the log normalization of the MPS for its fixed-size input
+
+        Uses iterated tensor contraction to compute :math:`\log(|\psi|^2)`,
+        where :math:`\psi` is the n'th order tensor described by the
+        contraction of MPS parameter cores. In the Born machine paradigm,
+        this is also :math:`\log(Z)`, for :math:`Z` the normalization
+        constant for the probability
+
+        Returns:
+            l_norm: Scalar value giving
+        """
+        cores = self.core_tensors
 
     @property
     def seq_len(self):
