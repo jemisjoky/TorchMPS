@@ -15,6 +15,7 @@
 
 """Uniform and non-uniform probabilistic MPS classes"""
 # from typing import Union, Sequence, Optional
+from math import sqrt
 
 import torch
 from torch import Tensor, nn
@@ -96,7 +97,7 @@ class ProbMPS(nn.Module):
         self.core_tensors = near_eye_init(
             (seq_len, input_dim, bond_dim, bond_dim), complex_params
         )
-        self.edge_vecs = torch.randn(2, bond_dim) / torch.sqrt(bond_dim)
+        self.edge_vecs = torch.randn(2, bond_dim) / sqrt(bond_dim)
         if complex_params:
             self.core_tensors = phaseify(self.core_tensors)
             self.edge_vecs = phaseify(self.edge_vecs)
@@ -131,6 +132,9 @@ class ProbMPS(nn.Module):
         mat_slices = get_mat_slices(input_data, self.core_tensors)
         if self.use_bias:
             mat_slices = mat_slices + self.bias_mat[None, None]
+
+        # Put the batch axis, since contract_matseq expects that
+        mat_slices.transpose_(0, 1)
 
         #  Contract all bond dims to get (unnormalized) prob amplitudes
         psi_vals = contract_matseq(

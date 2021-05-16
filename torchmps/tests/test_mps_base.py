@@ -16,16 +16,22 @@
 """Tests for MPS base functions"""
 import pytest
 from math import sqrt
+from functools import partial
 
 import torch
 from hypothesis import given, strategies as st
 
-from torchmps.mps_base import contract_matseq
+from torchmps.mps_base import contract_matseq, get_mat_slices, near_eye_init
 from torchmps.utils2 import batch_broadcast, batch_to
 
-bool_st = st.booleans()
-bond_dim_st = st.integers(1, 20)
-batch_shape_st = lambda l: st.lists(st.integers(1, 10), min_size=0, max_size=l)
+bool_st = st.booleans
+seq_len_st = partial(st.integers, 1, 50)
+bond_dim_st = partial(st.integers, 1, 20)
+input_dim_st = partial(st.integers, 1, 10)
+
+
+def batch_shape_st(s_len):
+    return st.lists(st.integers(1, 10), min_size=0, max_size=s_len)
 
 
 def naive_contraction(mats, lvec, rvec, use_lvec, use_rvec):
@@ -68,7 +74,52 @@ def naive_contraction(mats, lvec, rvec, use_lvec, use_rvec):
         return pmat
 
 
-@given(batch_shape_st(4), bond_dim_st, st.integers(0, 10), bool_st, bool_st, bool_st)
+@given(
+    seq_len_st(),
+    bond_dim_st(),
+    input_dim_st(),
+    input_dim_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
+)
+def test_get_mat_slices(
+    seq_len: int,
+    bond_dim: int,
+    input_dim: int,
+    batch: int,
+    vec_input: bool,
+    is_complex: bool,
+    uniform: bool,
+):
+    """
+    Check that get_mat_slices works as predicted
+    """
+    if uniform:
+        core_shape = (input_dim, bond_dim, bond_dim)
+    else:
+        core_shape = (seq_len, input_dim, bond_dim, bond_dim)
+    core_tensor = near_eye_init(core_shape, is_complex)
+
+    if vec_input:
+        fake_data = torch.randn(seq_len, batch, input_dim).abs()
+        fake_data /= fake_data.sum(dim=2, keepdim=True)
+    else:
+        fake_data = torch.randint(input_dim, (seq_len, batch))
+
+    # Run get_mat_slices and verify that the output has expected shape
+    output = get_mat_slices(fake_data, core_tensor)
+    assert output.shape == (seq_len, batch, bond_dim, bond_dim)
+
+
+@given(
+    batch_shape_st(4),
+    bond_dim_st(),
+    st.integers(0, 10),
+    bool_st(),
+    bool_st(),
+    bool_st(),
+)
 def test_contract_matseq_identity_batches(
     batch_shape, bond_dim, seq_len, use_lvec, use_rvec, parallel_eval
 ):
@@ -105,12 +156,12 @@ def test_contract_matseq_identity_batches(
 
 
 @given(
-    st.lists(bond_dim_st, min_size=1, max_size=10),
+    st.lists(bond_dim_st(), min_size=1, max_size=10),
     batch_shape_st(3),
-    bool_st,
-    bool_st,
-    bool_st,
-    bool_st,
+    bool_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
 )
 def test_contract_matseq_random_inhom_bonddim(
     bonddim_list, vec_batch, use_lvec, use_rvec, use_tuple, parallel_eval

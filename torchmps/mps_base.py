@@ -20,7 +20,15 @@ from typing import Union, Sequence, Optional
 import torch
 from torch import Tensor
 
-from torchmps.utils2 import bundle_tensors, batch_broadcast, batch_to, phaseify, einsum
+from torchmps.utils2 import (
+    bundle_tensors,
+    batch_broadcast,
+    batch_to,
+    phaseify,
+    einsum,
+    hermitian_trace,
+    realify,
+)
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -236,6 +244,10 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
     # TODO: Deal with packing if/when we have variable-len sequences,
     #       likely using pad_mat_slices function
 
+    # Promote seq_input to complex dtype if core_tensor is complex
+    if core_tensor.is_complex() and seq_input.is_floating_point():
+        seq_input = seq_input.to(core_tensor.dtype)
+
     # Perform the indexing/contraction on a case-by-case basis
     if indexing and uniform:
         mat_slices = core_tensor[seq_input]
@@ -243,9 +255,9 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
         # Indexing equivalent of the einsum operation at bottom
         mat_slices = core_tensor[torch.arange(seq_len)[:, None], seq_input]
     elif not indexing and uniform:
-        mat_slices = einsum("tbi,idd,->tbdd", seq_input, core_tensor)
+        mat_slices = einsum("tbi,ide->tbde", seq_input, core_tensor)
     elif not indexing and not uniform:
-        mat_slices = einsum("tbi,tidd,->tbdd", seq_input, core_tensor)
+        mat_slices = einsum("tbi,tide->tbde", seq_input, core_tensor)
 
     return mat_slices
 
@@ -294,7 +306,6 @@ def get_log_norm(
     uniform = core_tensor.ndim == 3
     left_vec, r_vec = boundary_vecs
     dens_mat = left_vec[:, None] @ left_vec[None, :].conj()
-    log_sum = torch.tensor(-float("inf"))
     log_norm = torch.zeros(())
     if uniform:
         core_tensor = (core_tensor,) * length
@@ -303,7 +314,7 @@ def get_log_norm(
     def transfer_op(core_t, d_mat, l_norm, l_sum=None):
         # Update density operator, rescale to have unit trace
         d_mat = einsum("ilr,lp,ipq->rq", core_t, d_mat, core_t.conj())
-        trace = torch.trace(d_mat)
+        trace = hermitian_trace(d_mat)
         l_norm = l_norm + torch.log(trace)
         d_mat = d_mat / trace
 
@@ -320,12 +331,15 @@ def get_log_norm(
         # Apply transfer operator `length` times, then add final correction
         for core in core_tensor:
             dens_mat, log_norm = transfer_op(core, dens_mat, log_norm)
-        log_c = torch.log(einsum("r,rq,q->", r_vec, dens_mat, r_vec.conj()))
 
-        return log_norm + log_c
+        correction = einsum("r,rq,q->", r_vec, dens_mat, r_vec.conj())
+        return log_norm + torch.log(realify(correction))
     else:
-        # Deal with the more intricate arbitrary-len calculation
         raise NotImplementedError
+        
+        # TODO: Deal with the more intricate arbitrary-len calculation
+        # log_sum = torch.tensor(-float("inf"))
+        # Use transfer_op with log_sum argument, iterate until convergence
 
 
 # TODO: Complete this after variable-len data format is better figured out
@@ -362,7 +376,7 @@ def near_eye_init(shape: tuple, is_complex: bool, noise: float = 1e-3) -> Tensor
 
     # Initialize core using size-adjusted value of noise
     eye_core = batch_to(torch.eye(*shape[-2:]), shape[:-2], 2)
-    noise = noise / torch.sqrt(torch.prod(torch.tensor(shape[-2:])))
+    noise = noise / torch.sqrt(torch.prod(torch.tensor(shape[-2:])).float())
     delta = noise * torch.randn(*shape)
     if is_complex:
         delta = phaseify(delta)

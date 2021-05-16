@@ -371,7 +371,7 @@ class OutputMat(Contractable):
         Multiply with an edge vector along the shared linear index
         """
         if not isinstance(edge_vec, EdgeVec):
-            raise NotImplemented    # noqa: F901
+            raise NotImplemented  # noqa: F901
         else:
             return super().__mul__(edge_vec, rmul)
 
