@@ -26,7 +26,7 @@ from torchmps.mps_base import (
     get_mat_slices,
     get_log_norm,
 )
-from torchmps.utils2 import phaseify
+from torchmps.utils2 import phaseify, einsum
 
 # TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -70,9 +70,6 @@ class ProbMPS(nn.Module):
         complex_params: Whether model parameters are complex or real. The
             former allows more expressivity, but is less common in Pytorch.
             Default: ``False``
-        periodic_bc: Whether MPS has periodic boundary conditions (i.e. is
-            a tensor ring) or open boundary conditions (i.e. is a tensor
-            train). Default: ``False``
         parallel_eval: Whether to force parallel contraction of tensor
             network. This leads to greater total computational cost, but
             can be faster in the presence of GPUs. Default: ``False``
@@ -86,7 +83,6 @@ class ProbMPS(nn.Module):
         input_dim: int,
         bond_dim: int,
         complex_params: bool = False,
-        periodic_bc: bool = False,
         parallel_eval: bool = False,
         use_bias: bool = False,
     ) -> None:
@@ -110,7 +106,6 @@ class ProbMPS(nn.Module):
 
         # Set other MPS attributes
         self.complex_params = complex_params
-        self.periodic_bc = periodic_bc
         self.parallel_eval = parallel_eval
 
     def forward(self, input_data: Tensor) -> Tensor:

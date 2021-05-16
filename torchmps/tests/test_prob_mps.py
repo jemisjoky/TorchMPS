@@ -37,14 +37,12 @@ input_dim_st = partial(st.integers, 1, 10)
     bool_st(),
     bool_st(),
     bool_st(),
-    bool_st(),
 )
 def test_model_forward(
     seq_len,
     input_dim,
     bond_dim,
     complex_params,
-    periodic_bc,
     parallel_eval,
     use_bias,
     vec_input,
@@ -59,7 +57,6 @@ def test_model_forward(
         input_dim,
         bond_dim,
         complex_params,
-        periodic_bc,
         parallel_eval,
         use_bias,
     )
@@ -76,3 +73,16 @@ def test_model_forward(
     assert log_probs.is_floating_point()
     if not torch.all(log_probs <= 0):
         assert input_dim == 1
+
+
+# def test_model_backprop(
+#     seq_len,
+#     input_dim,
+#     bond_dim,
+#     complex_params,
+#     parallel_eval,
+#     use_bias,
+#     vec_input,
+#     big_batch,
+# ):
+#     pass
