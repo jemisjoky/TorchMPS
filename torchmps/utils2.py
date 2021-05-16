@@ -159,6 +159,29 @@ def phaseify(tensor: Tensor) -> Tensor:
     return tensor * torch.exp(2j * pi * torch.rand_like(tensor))
 
 
+def hermitian_trace(tensor: Tensor) -> Tensor:
+    """
+    Same as `torch.trace` for Hermitian matrices, ensures real output
+    """
+    if tensor.is_complex():
+        return realify(einsum("ii->", tensor))
+    else:
+        return torch.trace(tensor)
+
+
+def realify(tensor: Tensor) -> Tensor:
+    """
+    Convert approximately real complex tensor to real tensor
+
+    Input must be approximately real, `realify` will raise error if not
+    """
+    if tensor.is_complex():
+        assert torch.allclose(tensor.imag, torch.zeros(()), atol=1e-4), breakpoint()
+        return tensor.real
+    else:
+        return tensor
+
+
 # Load a good einsum function
 try:
     import opt_einsum

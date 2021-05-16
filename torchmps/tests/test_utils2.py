@@ -17,10 +17,15 @@
 import torch
 from hypothesis import given, strategies as st
 
-from torchmps.utils2 import batch_broadcast, batch_to
+from torchmps.utils2 import batch_broadcast
 
-batch_shape_st = lambda l: st.lists(st.integers(1, 10), min_size=0, max_size=l)
-nbatch_shape_st = lambda l: st.lists(st.integers(0, 10), min_size=0, max_size=l)
+
+def batch_shape_st(s_len):
+    return st.lists(st.integers(1, 10), min_size=0, max_size=s_len)
+
+
+def nbatch_shape_st(s_len):
+    return st.lists(st.integers(0, 10), min_size=0, max_size=s_len)
 
 
 def test_batch_broadcast_good_shapes():

@@ -37,7 +37,7 @@ requirements: requirements.txt
 
 .PHONY: test
 test:
-	pytest -v --cov=torchmps torchmps/tests
+	pytest torchmps/tests
 
 .PHONY: test-report
 test-report:
