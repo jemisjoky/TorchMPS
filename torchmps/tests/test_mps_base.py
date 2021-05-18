@@ -25,7 +25,7 @@ from torchmps.mps_base import contract_matseq, get_mat_slices, near_eye_init
 from torchmps.utils2 import batch_broadcast, batch_to
 
 bool_st = st.booleans
-seq_len_st = partial(st.integers, 1, 50)
+seq_len_st = partial(st.integers, 1, 1000)
 bond_dim_st = partial(st.integers, 1, 20)
 input_dim_st = partial(st.integers, 1, 10)
 
@@ -83,7 +83,7 @@ def naive_contraction(mats, lvec, rvec, use_lvec, use_rvec):
     bool_st(),
     bool_st(),
 )
-def test_get_mat_slices(
+def test_get_mat_slices_shape(
     seq_len: int,
     bond_dim: int,
     input_dim: int,
@@ -93,13 +93,14 @@ def test_get_mat_slices(
     uniform: bool,
 ):
     """
-    Check that get_mat_slices works as predicted
+    Check that get_mat_slices gives correct shapes
     """
     if uniform:
         core_shape = (input_dim, bond_dim, bond_dim)
     else:
         core_shape = (seq_len, input_dim, bond_dim, bond_dim)
     core_tensor = near_eye_init(core_shape, is_complex)
+    assert core_tensor.is_complex() == is_complex
 
     if vec_input:
         fake_data = torch.randn(seq_len, batch, input_dim).abs()
@@ -110,6 +111,50 @@ def test_get_mat_slices(
     # Run get_mat_slices and verify that the output has expected shape
     output = get_mat_slices(fake_data, core_tensor)
     assert output.shape == (seq_len, batch, bond_dim, bond_dim)
+
+
+@given(
+    seq_len_st(),
+    bond_dim_st(),
+    input_dim_st(),
+    input_dim_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
+)
+def test_composite_init_mat_slice_contraction(
+    seq_len: int,
+    bond_dim: int,
+    input_dim: int,
+    batch: int,
+    vec_input: bool,
+    is_complex: bool,
+    uniform: bool,
+):
+    """
+    Verify that initializing identity core, getting matrix slices, and then
+    contracting the slices gives identity matrices
+    """
+    if uniform:
+        core_shape = (input_dim, bond_dim, bond_dim)
+    else:
+        core_shape = (seq_len, input_dim, bond_dim, bond_dim)
+    core_tensor = near_eye_init(core_shape, is_complex, noise=0)
+    assert core_tensor.is_complex() == is_complex
+
+    if vec_input:
+        fake_data = torch.randn(seq_len, batch, input_dim).abs()
+        fake_data /= fake_data.sum(dim=2, keepdim=True)
+    else:
+        fake_data = torch.randint(input_dim, (seq_len, batch))
+
+    # Get matrix slices, then contract them all together
+    mat_slices = get_mat_slices(fake_data, core_tensor)
+    prod_mats = contract_matseq(mat_slices)
+
+    # Verify that all contracted matrix slices are identities
+    target_prods = torch.eye(bond_dim)
+    assert torch.allclose(prod_mats.abs(), target_prods)
 
 
 @given(
@@ -130,8 +175,10 @@ def test_contract_matseq_identity_batches(
     empty_case = seq_len == 0 and not (use_lvec or use_rvec)
 
     # Generate identity matrices and boundary vectors
-    eye = torch.eye(bond_dim)
-    eye_mats = batch_to(eye, tuple(batch_shape) + (seq_len,), 2)
+    # eye = torch.eye(bond_dim)
+    # eye_mats = batch_to(eye, tuple(batch_shape) + (seq_len,), 2)
+    shape = tuple(batch_shape) + (seq_len, bond_dim, bond_dim)
+    eye_mats = near_eye_init(shape, noise=0)
     eye_mats2 = [eye_mats[..., i, :, :] for i in range(seq_len)]
     left_vec, right_vec = torch.randn(2, bond_dim)
     lvec = left_vec if use_lvec else None

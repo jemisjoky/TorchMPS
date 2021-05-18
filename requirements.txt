@@ -1,2 +1,2 @@
-torch ~= 1.7.1
+torch ~= 1.8.1
 opt_einsum ~= 3.3.0

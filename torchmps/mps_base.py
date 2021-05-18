@@ -28,6 +28,7 @@ from torchmps.utils2 import (
     einsum,
     hermitian_trace,
     realify,
+    CIndex,
 )
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
@@ -253,7 +254,8 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
         mat_slices = core_tensor[seq_input]
     elif indexing and not uniform:
         # Indexing equivalent of the einsum operation at bottom
-        mat_slices = core_tensor[torch.arange(seq_len)[:, None], seq_input]
+        mat_slices = CIndex(core_tensor)[torch.arange(seq_len)[:, None], seq_input]
+        # mat_slices = core_tensor[torch.arange(seq_len)[:, None], seq_input]
     elif not indexing and uniform:
         mat_slices = einsum("tbi,ide->tbde", seq_input, core_tensor)
     elif not indexing and not uniform:
@@ -336,7 +338,7 @@ def get_log_norm(
         return log_norm + torch.log(realify(correction))
     else:
         raise NotImplementedError
-        
+
         # TODO: Deal with the more intricate arbitrary-len calculation
         # log_sum = torch.tensor(-float("inf"))
         # Use transfer_op with log_sum argument, iterate until convergence
@@ -347,13 +349,16 @@ def pad_mat_slices():
     pass
 
 
-def near_eye_init(shape: tuple, is_complex: bool, noise: float = 1e-3) -> Tensor:
+def near_eye_init(
+    shape: tuple, is_complex: bool = False, noise: float = 1e-3
+) -> Tensor:
     """
     Initialize an MPS core tensor with all slices close to identity matrix
 
     Args:
         shape: Shape of the core tensor being initialized.
         is_complex: Whether to initialize a complex core tensor.
+            Default: False
         noise: Normalized noise value setting stdev around identity matrix.
             Default: 1e-3
 
@@ -366,7 +371,7 @@ def near_eye_init(shape: tuple, is_complex: bool, noise: float = 1e-3) -> Tensor
         if torch.prod(torch.tensor(shape[:-3])) != 1:
             raise ValueError(
                 "Batch core tensor with non-square matrix slices "
-                "requested, this probably isn't what you wanted"
+                "requested, pretty sure this isn't what you wanted"
             )
         else:
             warnings.warn(

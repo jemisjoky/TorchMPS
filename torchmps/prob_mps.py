@@ -26,7 +26,7 @@ from torchmps.mps_base import (
     get_mat_slices,
     get_log_norm,
 )
-from torchmps.utils2 import phaseify, einsum
+from torchmps.utils2 import phaseify
 
 # TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -90,19 +90,21 @@ class ProbMPS(nn.Module):
         assert min(seq_len, input_dim, bond_dim) > 0
 
         # Initialize core tensor and edge vectors
-        self.core_tensors = near_eye_init(
+        core_tensors = near_eye_init(
             (seq_len, input_dim, bond_dim, bond_dim), complex_params
         )
-        self.edge_vecs = torch.randn(2, bond_dim) / sqrt(bond_dim)
+        edge_vecs = torch.randn(2, bond_dim) / sqrt(bond_dim)
         if complex_params:
-            self.core_tensors = phaseify(self.core_tensors)
-            self.edge_vecs = phaseify(self.edge_vecs)
+            edge_vecs = phaseify(edge_vecs)
+        self.core_tensors = nn.Parameter(core_tensors)
+        self.edge_vecs = nn.Parameter(edge_vecs)
 
         # Initialize (optional) bias matrices at zero
         if use_bias:
-            self.bias_mat = torch.zeros(bond_dim, bond_dim)
+            bias_mat = torch.zeros(bond_dim, bond_dim)
             if complex_params:
-                self.bias_mat = phaseify(self.bias_mat)
+                bias_mat = phaseify(bias_mat)
+            self.bias_mat = nn.Parameter(bias_mat)
 
         # Set other MPS attributes
         self.complex_params = complex_params
@@ -136,8 +138,19 @@ class ProbMPS(nn.Module):
             mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
         )
 
+        # Get log normalization and check for infinities
+        log_norm = self.log_norm()
+        assert log_norm.isfinite()
+        assert torch.all(psi_vals.isfinite())
+
+        if torch.any(psi_vals == 0):
+            breakpoint()
+            contract_matseq(
+                mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
+            )
+
         # Convert to unnormalized log probabilities, then normalize
-        return 2 * torch.log(torch.abs(psi_vals)) - self.log_norm()
+        return 2 * torch.log(torch.abs(psi_vals)) - log_norm
 
     def loss(self, input_data: Tensor) -> Tensor:
         """
