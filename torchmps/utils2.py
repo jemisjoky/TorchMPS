@@ -164,7 +164,8 @@ def hermitian_trace(tensor: Tensor) -> Tensor:
     Same as `torch.trace` for Hermitian matrices, ensures real output
     """
     if tensor.is_complex():
-        return realify(einsum("ii->", tensor))
+        return realify(torch.trace(tensor))
+        # return realify(einsum("ii->", tensor))
     else:
         return torch.trace(tensor)
 
@@ -180,6 +181,24 @@ def realify(tensor: Tensor) -> Tensor:
         return tensor.real
     else:
         return tensor
+
+
+### COMPLEX WORKAROUND FUNCTIONS ###   # noqa: E266
+# TODO: Get rid of these as PyTorch adds complex number support
+
+
+class CIndex:
+    """Wrapper class that allows complex tensors to be indexed"""
+
+    def __init__(self, tensor):
+        self.tensor = tensor
+
+    def __getitem__(self, index):
+        if self.tensor.is_complex():
+            t_r, t_i = self.tensor.real, self.tensor.imag
+            return t_r[index] + 1j * t_i[index]
+        else:
+            return self.tensor[index]
 
 
 # Load a good einsum function

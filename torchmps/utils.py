@@ -252,7 +252,7 @@ def init_tensor(shape, bond_str, init_method):
     return tensor
 
 
-### OLDER MISCELLANEOUS FUNCTIONS ###
+### OLDER MISCELLANEOUS FUNCTIONS ###   # noqa: E266
 
 
 def onehot(labels, max_value):
