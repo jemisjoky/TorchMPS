@@ -1,17 +1,23 @@
-# Copyright (C) 2021 Jacob Ellwyn Miller
+# MIT License
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Copyright (c) 2021 Jacob Miller
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
 #
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Tests for MPS base functions"""
 from functools import partial
@@ -19,7 +25,8 @@ from functools import partial
 import torch
 from hypothesis import given, settings, strategies as st
 
-from torchmps.prob_mps import ProbMPS
+from torchmps import ProbMPS
+from .utils_for_tests import complete_binary_dataset, allcloseish
 
 bool_st = st.booleans
 seq_len_st = partial(st.integers, 1, 1000)
@@ -39,12 +46,7 @@ def init_model_and_data(
 ):
     """Initialize probabilistic MPS and the sequence data it will be fed"""
     prob_mps = ProbMPS(
-        seq_len,
-        input_dim,
-        bond_dim,
-        complex_params,
-        parallel_eval,
-        use_bias,
+        seq_len, input_dim, bond_dim, complex_params, parallel_eval, use_bias
     )
     batch_dim = 25 if big_batch else 1
     if vec_input:
@@ -100,6 +102,30 @@ def test_model_forward(
     assert log_probs.is_floating_point()
     if not torch.all(log_probs <= 0):
         assert input_dim == 1
+
+
+# @settings(deadline=None)
+@given(input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st())
+def test_valid_binary_probs(seq_len, bond_dim, complex_params, parallel_eval, use_bias):
+    """
+    Verify that for binary distributions, all probabilities sum up to 1
+    """
+    # Initialize dataset and model
+    all_seqs = complete_binary_dataset(seq_len).T
+    prob_mps, _ = init_model_and_data(
+        seq_len,
+        2,
+        bond_dim,
+        complex_params,
+        parallel_eval,
+        use_bias,
+        False,
+        False,
+    )
+
+    # Get model probabilities and verify they are close to 1
+    probs = torch.exp(prob_mps(all_seqs))
+    assert allcloseish(probs.sum(), 1.0)
 
 
 @settings(deadline=None)
@@ -159,7 +185,7 @@ def test_model_backward(
         if input_dim != 1:
             param_diff = param_diff or not torch.all(old_p == new_p)
         else:
-            assert torch.allclose(old_p, new_p, rtol=1e-3, atol=1e-3)
+            assert allcloseish(old_p, new_p)
             param_diff = True
 
     assert param_diff

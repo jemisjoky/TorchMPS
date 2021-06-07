@@ -487,7 +487,7 @@ class MPS(nn.Module):
             assert len(new_bonds) == len(new_svs)
             for i, bond_dim in enumerate(new_bonds):
                 if bond_dim != -1:
-                    assert new_svs[i] is not -1
+                    assert new_svs[i] != -1
                     self.bond_list[i] = bond_dim
                     self.sv_list[i] = new_svs[i]
 
