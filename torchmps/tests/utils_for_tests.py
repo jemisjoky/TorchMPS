@@ -20,6 +20,8 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Utility functions that are only used for tests"""
+import pytest
+
 import numpy as np
 import torch
 
@@ -50,3 +52,8 @@ def allcloseish(arr1: Tensor, arr2: Tensor) -> bool:
     if not isinstance(arr2, torch.Tensor):
         arr2 = torch.tensor(arr2)
     return torch.allclose(arr1, arr2, rtol=1e-3, atol=1e-3)
+
+
+def group_name(name: str):
+    """Convenience wrapper for setting pytest benchmark group names"""
+    return pytest.mark.benchmark(group=name)

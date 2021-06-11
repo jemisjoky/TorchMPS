@@ -1,3 +1,7 @@
+.PHONY: benchmark
+benchmark:
+	pytest --benchmark-sort=mean torchmps/tests/benchmarks
+
 .PHONY: check-format
 check-format:
 	black --check --diff torchmps/
@@ -36,9 +40,9 @@ requirements: requirements.txt
 	pip install -r requirements.txt
 
 .PHONY: test
-test:
-	pytest torchmps/tests
 
+test:
+	pytest --ignore=torchmps/tests/benchmarks torchmps/tests
 .PHONY: test-report
 test-report:
 	pytest --cov-report term-missing --cov=torchmps torchmps/tests

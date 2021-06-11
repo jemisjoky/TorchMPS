@@ -40,9 +40,10 @@ def batch_shape_st(s_len):
     return st.lists(st.integers(1, 10), min_size=0, max_size=s_len)
 
 
-def naive_contraction(mats, lvec, rvec, use_lvec, use_rvec):
+def naive_contraction(mats, lvec, rvec):
     """Handle conditional contraction with boundary vectors"""
     # For empty batch of matrices, replace with single identity matrix
+    use_lvec, use_rvec = lvec is not None, rvec is not None
     if isinstance(mats, torch.Tensor) and mats.shape[-3] == 0:
         assert isinstance(mats, torch.Tensor)
         assert mats.shape[-2] == mats.shape[-1]
@@ -55,9 +56,14 @@ def naive_contraction(mats, lvec, rvec, use_lvec, use_rvec):
     else:
         assert hasattr(mats, "__len__")
         mats = list(mats)
-    lvec, rvec = lvec[..., None, :], rvec[..., None]
-    out = batch_broadcast([lvec, rvec] + mats, (2,) * (len(mats) + 2))
-    lvec, rvec, mats = out[0], out[1], out[2:]
+    if use_lvec:
+        lvec = lvec[..., None, :]
+        out = batch_broadcast([lvec] + mats, (2,) * (len(mats) + 1))
+        lvec, mats = out[0], list(out[1:])
+    if use_rvec:
+        rvec = rvec[..., :, None]
+        out = batch_broadcast([rvec] + mats, (2,) * (len(mats) + 1))
+        rvec, mats = out[0], out[1:]
 
     # Matrix/vector multiplication which respects batch dimensions
     if use_rvec:
@@ -191,7 +197,7 @@ def test_contract_matseq_identity_batches(
     rvec = right_vec if use_rvec else None
 
     # Contract with the naive algorithm, compare to contract_matseq output
-    naive_result = naive_contraction(eye_mats, left_vec, right_vec, use_lvec, use_rvec)
+    naive_result = naive_contraction(eye_mats, lvec, rvec)
     lib_result = contract_matseq(eye_mats, lvec, rvec, parallel_eval)
 
     # Can't call contract_matseq with empty list, no boundary vectors
@@ -243,7 +249,7 @@ def test_contract_matseq_random_inhom_bonddim(
         return
 
     # Contract with the naive algorithm, compare to contract_matseq output
-    naive_result = naive_contraction(matrices, left_vec, right_vec, use_lvec, use_rvec)
+    naive_result = naive_contraction(matrices, lvec, rvec)
     lib_result = contract_matseq(matrices, lvec, rvec, parallel_eval)
 
     # Numerical error is sometimes greater than tolerance of allclose
