@@ -32,7 +32,7 @@ from torchmps.mps_base import (
     get_mat_slices,
     get_log_norm,
 )
-from torchmps.utils2 import phaseify
+from torchmps.utils2 import phaseify, floor2
 
 # TensorSeq = Union[Tensor, Sequence[Tensor]]
 
@@ -115,6 +115,7 @@ class ProbMPS(nn.Module):
         # Set other MPS attributes
         self.complex_params = complex_params
         self.parallel_eval = parallel_eval
+        self.rescale_factor = None
 
     def forward(self, input_data: Tensor) -> Tensor:
         """
@@ -149,14 +150,13 @@ class ProbMPS(nn.Module):
         assert log_norm.isfinite()
         assert torch.all(psi_vals.isfinite())
 
-        if torch.any(psi_vals == 0):
-            breakpoint()
-            contract_matseq(
-                mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
-            )
+        # Compute unnormalized log probabilities and rescale factor
+        log_uprobs = torch.log(torch.abs(psi_vals))
+        self.rescale_factor = torch.exp(log_uprobs.mean() / len(input_data))
+        # print(f"[{log_uprobs.min().exp()}, {log_uprobs.max().exp()}]")
 
-        # Convert to unnormalized log probabilities, then normalize
-        return 2 * torch.log(torch.abs(psi_vals)) - log_norm
+        # Return normalized probabilities
+        return 2 * log_uprobs - log_norm
 
     def loss(self, input_data: Tensor) -> Tensor:
         """
@@ -171,6 +171,16 @@ class ProbMPS(nn.Module):
             loss_val: Scalar value giving average of the negative log
                 likelihood loss of all sequences in input batch.
         """
+        # Rescale the core tensors and boundary vectors
+        if self.rescale_factor is not None:
+            state_dict = self.state_dict()
+            vec_rescale = floor2(self.edge_vecs.norm(dim=1, keepdim=True))
+            new_edgevecs = self.edge_vecs / vec_rescale
+            new_coretensors = self.core_tensors / self.rescale_factor
+            state_dict["edge_vecs"] = new_edgevecs
+            state_dict["core_tensors"] = new_coretensors
+            self.load_state_dict(state_dict)
+
         return -torch.mean(self.forward(input_data))
 
     def log_norm(self) -> Tensor:
