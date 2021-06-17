@@ -20,7 +20,7 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Utility functions"""
-from math import pi
+from math import pi, log
 from functools import partial
 from typing import Union, Sequence
 
@@ -187,6 +187,18 @@ def realify(tensor: Tensor) -> Tensor:
         return tensor.real
     else:
         return tensor
+
+
+def floor2(tensor: Tensor) -> Tensor:
+    """
+    Get the smallest powers of two which is greater than the tensor elements
+
+    Requires that the input elements are positive
+    """
+    return 2 ** (torch.floor(torch.log(tensor)))
+
+
+log_2 = log(2)
 
 
 ### COMPLEX WORKAROUND FUNCTIONS ###   # noqa: E266
