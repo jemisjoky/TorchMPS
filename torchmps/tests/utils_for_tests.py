@@ -43,7 +43,7 @@ def complete_binary_dataset(str_len: int) -> Tensor:
     return torch.tensor(all_data).long()
 
 
-def allcloseish(arr1: Tensor, arr2: Tensor) -> bool:
+def allcloseish(arr1: Tensor, arr2: Tensor, tol=1e-4) -> bool:
     """
     Same as `torch.allclose`, but less nit-picky
     """
@@ -51,7 +51,7 @@ def allcloseish(arr1: Tensor, arr2: Tensor) -> bool:
         arr1 = torch.tensor(arr1)
     if not isinstance(arr2, torch.Tensor):
         arr2 = torch.tensor(arr2)
-    return torch.allclose(arr1, arr2, rtol=1e-3, atol=1e-3)
+    return torch.allclose(arr1, arr2, rtol=tol, atol=tol)
 
 
 def group_name(name: str):
