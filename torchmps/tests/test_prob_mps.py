@@ -125,7 +125,7 @@ def test_valid_binary_probs(seq_len, bond_dim, complex_params, parallel_eval, us
 
     # Get model probabilities and verify they are close to 1
     probs = torch.exp(prob_mps(all_seqs))
-    assert allcloseish(probs.sum(), 1.0)
+    assert allcloseish(probs.sum(), 1.0, tol=5e-3)
 
 
 @settings(deadline=None)
@@ -185,7 +185,7 @@ def test_model_backward(
         if input_dim != 1:
             param_diff = param_diff or not torch.all(old_p == new_p)
         else:
-            assert allcloseish(old_p, new_p)
+            assert allcloseish(old_p, new_p, tol=1e-3)
             param_diff = True
 
     assert param_diff

@@ -486,8 +486,8 @@ class MPS(nn.Module):
             assert len(new_bonds) == len(self.bond_list)
             assert len(new_bonds) == len(new_svs)
             for i, bond_dim in enumerate(new_bonds):
-                if bond_dim != -1:
-                    assert new_svs[i] != -1
+                if bond_dim is not None:
+                    assert new_svs[i] is not None
                     self.bond_list[i] = bond_dim
                     self.sv_list[i] = new_svs[i]
 
@@ -860,7 +860,7 @@ class MergedLinearRegion(LinearRegion):
         merged_list = getattr(self, list_name)
 
         # Unmerge each core internally and add results to unmerged_list
-        unmerged_list, bond_list, sv_list = [], [-1], [-1]
+        unmerged_list, bond_list, sv_list = [], [None], [None]
         for core in merged_list:
 
             # Apply internal unmerging routine if our core supports it
@@ -872,8 +872,8 @@ class MergedLinearRegion(LinearRegion):
             else:
                 assert not isinstance(core, InputRegion)
                 unmerged_list.append(core)
-                bond_list.append(-1)
-                sv_list.append(-1)
+                bond_list.append(None)
+                sv_list.append(None)
 
         # Combine all combinable pairs of cores. This occurs in several
         # passes, and for now acts nontrivially only on InputSite instances
@@ -1189,7 +1189,7 @@ class MergedInput(nn.Module):
         max_D = tensor.size(1)
 
         # Split every one of the cores into two and add them both to core_list
-        core_list, bond_list, sv_list = [], [-1], [-1]
+        core_list, bond_list, sv_list = [], [None], [None]
         for merged_core in tensor:
             sv_vec = torch.empty(max_D)
             left_core, right_core, bond_dim = svd_flex(
@@ -1197,8 +1197,8 @@ class MergedInput(nn.Module):
             )
 
             core_list += [left_core, right_core]
-            bond_list += [bond_dim, -1]
-            sv_list += [sv_vec, -1]
+            bond_list += [bond_dim, None]
+            sv_list += [sv_vec, None]
 
         # Collate the split cores into one tensor and return as an InputRegion
         tensor = torch.stack(core_list)
@@ -1385,8 +1385,8 @@ class MergedOutput(nn.Module):
             )
             return (
                 [OutputSite(output_core), InputSite(input_core)],
-                [-1, bond_dim, -1],
-                [-1, sv_vec, -1],
+                [None, bond_dim, None],
+                [None, sv_vec, None],
             )
 
         else:
@@ -1399,8 +1399,8 @@ class MergedOutput(nn.Module):
             )
             return (
                 [InputSite(input_core), OutputSite(output_core)],
-                [-1, bond_dim, -1],
-                [-1, sv_vec, -1],
+                [None, bond_dim, None],
+                [None, sv_vec, None],
             )
 
     def get_norm(self):

@@ -12,3 +12,6 @@ sublime/
 
 # Misc. files
 .coverage
+
+# Local MNIST download
+mnist/
