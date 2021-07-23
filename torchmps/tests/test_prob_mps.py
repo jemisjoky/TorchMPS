@@ -23,18 +23,27 @@
 from functools import partial
 
 import torch
+import pytest
 from hypothesis import given, settings, strategies as st
 
-from torchmps import ProbMPS
+from torchmps import ProbMPS, ProbUnifMPS
 from .utils_for_tests import complete_binary_dataset, allcloseish
 
+# Frequently used Hypothesis strategies
 bool_st = st.booleans
 seq_len_st = partial(st.integers, 1, 1000)
 bond_dim_st = partial(st.integers, 1, 20)
 input_dim_st = partial(st.integers, 1, 10)
+model_list = ["fixed-len", "uniform"]
+
+
+# Parameterization over fixed-len and uniform models
+def parametrize_models():
+    return pytest.mark.parametrize("model", model_list, ids=model_list)
 
 
 def init_model_and_data(
+    model,
     seq_len,
     input_dim,
     bond_dim,
@@ -45,9 +54,15 @@ def init_model_and_data(
     big_batch,
 ):
     """Initialize probabilistic MPS and the sequence data it will be fed"""
-    prob_mps = ProbMPS(
-        seq_len, input_dim, bond_dim, complex_params, parallel_eval, use_bias
-    )
+    if model == "fixed-len":
+        prob_mps = ProbMPS(
+            seq_len, input_dim, bond_dim, complex_params, parallel_eval, use_bias
+        )
+    elif model == "uniform":
+        prob_mps = ProbUnifMPS(
+            input_dim, bond_dim, complex_params, parallel_eval, use_bias
+        )
+
     batch_dim = 25 if big_batch else 1
     if vec_input:
         fake_data = torch.randn(seq_len, batch_dim, input_dim).abs()
@@ -58,6 +73,7 @@ def init_model_and_data(
     return prob_mps, fake_data
 
 
+@parametrize_models()
 @settings(deadline=None)
 @given(
     seq_len_st(),
@@ -70,6 +86,7 @@ def init_model_and_data(
     bool_st(),
 )
 def test_model_forward(
+    model,
     seq_len,
     input_dim,
     bond_dim,
@@ -84,6 +101,7 @@ def test_model_forward(
     """
     # Initialize probabilistic MPS and dataset
     prob_mps, fake_data = init_model_and_data(
+        model,
         seq_len,
         input_dim,
         bond_dim,
@@ -104,15 +122,19 @@ def test_model_forward(
         assert input_dim == 1
 
 
+@parametrize_models()
 # @settings(deadline=None)
 @given(input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st())
-def test_valid_binary_probs(seq_len, bond_dim, complex_params, parallel_eval, use_bias):
+def test_valid_binary_probs(
+    model, seq_len, bond_dim, complex_params, parallel_eval, use_bias
+):
     """
     Verify that for binary distributions, all probabilities sum up to 1
     """
     # Initialize dataset and model
     all_seqs = complete_binary_dataset(seq_len).T
     prob_mps, _ = init_model_and_data(
+        model,
         seq_len,
         2,
         bond_dim,
@@ -128,6 +150,7 @@ def test_valid_binary_probs(seq_len, bond_dim, complex_params, parallel_eval, us
     assert allcloseish(probs.sum(), 1.0, tol=5e-3)
 
 
+@parametrize_models()
 @settings(deadline=None)
 @given(
     seq_len_st(),
@@ -140,6 +163,7 @@ def test_valid_binary_probs(seq_len, bond_dim, complex_params, parallel_eval, us
     bool_st(),
 )
 def test_model_backward(
+    model,
     seq_len,
     input_dim,
     bond_dim,
@@ -154,6 +178,7 @@ def test_model_backward(
     """
     # Initialize probabilistic MPS, dataset, and optimizer
     prob_mps, fake_data = init_model_and_data(
+        model,
         seq_len,
         input_dim,
         bond_dim,

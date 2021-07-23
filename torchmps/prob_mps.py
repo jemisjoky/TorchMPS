@@ -311,7 +311,7 @@ class ProbUnifMPS(ProbMPS):
         # Contract inputs with core tensors and add bias matrices
         mat_slices = get_mat_slices(input_data, self.core_tensors)
         if self.use_bias:
-            mat_slices = mat_slices + self.bias_mat[None, None]
+            mat_slices = mat_slices + self.bias_mat[None]
 
         # Put the batch axis, since contract_matseq expects that
         mat_slices.transpose_(0, 1)
@@ -333,31 +333,6 @@ class ProbUnifMPS(ProbMPS):
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm
 
-    # def loss(self, input_data: Tensor) -> Tensor:
-    #     """
-    #     Get the negative log likelihood loss for batch of input data
-
-    #     Args:
-    #         input_data: Sequential with shape `(seq_len, batch)`, for
-    #             discrete inputs, or shape `(seq_len, batch, input_dim)`,
-    #             for vector inputs.
-
-    #     Returns:
-    #         loss_val: Scalar value giving average of the negative log
-    #             likelihood loss of all sequences in input batch.
-    #     """
-    #     # Rescale the core tensors and boundary vectors
-    #     if self.rescale_factor is not None:
-    #         state_dict = self.state_dict()
-    #         vec_rescale = floor2(self.edge_vecs.norm(dim=1, keepdim=True))
-    #         new_edgevecs = self.edge_vecs / vec_rescale
-    #         new_coretensors = self.core_tensors / self.rescale_factor
-    #         state_dict["edge_vecs"] = new_edgevecs
-    #         state_dict["core_tensors"] = new_coretensors
-    #         self.load_state_dict(state_dict)
-
-    #     return -torch.mean(self.forward(input_data))
-
     def log_norm(self, data_len) -> Tensor:
         r"""
         Compute the log normalization of the MPS for its fixed-size input
@@ -374,7 +349,7 @@ class ProbUnifMPS(ProbMPS):
         """
         # Account for bias matrices before calling log norm implementation
         if self.use_bias:
-            core_tensors = self.core_tensors + self.bias_mat[None, None]
+            core_tensors = self.core_tensors + self.bias_mat[None]
         else:
             core_tensors = self.core_tensors
 

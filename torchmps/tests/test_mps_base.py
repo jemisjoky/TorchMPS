@@ -25,7 +25,7 @@ from math import sqrt
 from functools import partial
 
 import torch
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 from torchmps.mps_base import contract_matseq, get_mat_slices, near_eye_init
 from torchmps.utils2 import batch_broadcast, batch_to
@@ -169,6 +169,7 @@ def test_composite_init_mat_slice_contraction(
     assert torch.allclose(prod_mats.abs(), target_prods)
 
 
+@settings(deadline=None)
 @given(
     batch_shape_st(4),
     bond_dim_st(),
