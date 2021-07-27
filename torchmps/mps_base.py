@@ -21,6 +21,7 @@
 
 """Basic MPS functions used for uniform and non-uniform models"""
 import warnings
+from itertools import repeat
 from typing import Union, Sequence, Optional
 
 import torch
@@ -38,6 +39,66 @@ from torchmps.utils2 import (
 )
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
+
+
+def default_eval(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) -> Tensor:
+    r"""
+    Evaluate MPS tensor elements relative to a batch of sequential inputs.
+
+    Args:
+        seq_input: Tensor with shape `(seq_len, batch)` for discrete input
+            sequences, or `(seq_len, batch, input_dim)` for vector input
+            sequences.
+        core_tensor: Tensor with shape `(input_dim, bond_dim, bond_dim)`
+            for uniform MPS or `(seq_len, input_dim, bond_dim, bond_dim)`
+            for fixed-length MPS.
+        bound_vecs: Left and right boundary vectors expressed in matrix
+            with shape `(2, bond_dim)`.
+
+    Returns:
+        contraction: Vector with shape `(batch,)` containing the elements
+            of the MPS parameterized by `core_tensor` and `bound_vecs`,
+            relative to the inputs in `seq_input`.
+    """
+    # Check inputs, ensure they have correct shapes
+    seq_len = len(seq_input)
+    batch = seq_input.shape[1]
+    assert bound_vecs.ndim == 2
+    assert seq_input.ndim in (2, 3)
+    assert core_tensor.ndim in (3, 4)
+    assert bound_vecs.shape[0] == 2
+    assert bound_vecs.shape[-1] == core_tensor.shape[-1]
+    uniform = core_tensor.ndim == 3
+    vec_input = seq_input.ndim == 3
+    if not uniform:
+        assert len(core_tensor) == seq_len
+    if vec_input:
+        assert seq_input.shape[-1] == core_tensor.shape[-3]
+
+    # Promote seq_input to complex dtype if core_tensor is complex
+    if core_tensor.is_complex() and seq_input.is_floating_point():
+        seq_input = seq_input.to(core_tensor.dtype)
+
+    # Condition on cases of vector inputs and non-uniform MPS
+    if uniform:
+        all_cores = repeat(core_tensor, seq_len)
+    else:
+        all_cores = core_tensor
+    if vec_input:
+        slice_fun = lambda inps, core: einsum("bi,ide->bde", inps, core)
+    else:
+        slice_fun = lambda inps, core: core[inps]
+
+    # Process input sequentially, from left to right
+    vecs = bound_vecs[0][None, None]
+    for inps, core in zip(seq_input, all_cores):
+        mats = slice_fun(inps, core)
+        vecs = torch.matmul(vecs, mats)
+
+    # Contract with the right boundary vector, return result
+    contraction = torch.matmul(vecs.squeeze(dim=1), bound_vecs[1][:, None])
+    assert contraction.shape == (batch, 1)
+    return contraction.squeeze(dim=1)
 
 
 def contract_matseq(
