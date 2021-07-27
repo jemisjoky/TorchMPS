@@ -27,7 +27,12 @@ from functools import partial
 import torch
 from hypothesis import given, settings, strategies as st
 
-from torchmps.mps_base import contract_matseq, get_mat_slices, near_eye_init
+from torchmps.mps_base import (
+    contract_matseq,
+    get_mat_slices,
+    near_eye_init,
+    default_eval,
+)
 from torchmps.utils2 import batch_broadcast, batch_to
 
 bool_st = st.booleans
@@ -125,6 +130,7 @@ def test_get_mat_slices_shape(
     assert output.shape == (seq_len, batch, bond_dim, bond_dim)
 
 
+@settings(deadline=None)
 @given(
     seq_len_st(),
     bond_dim_st(),
@@ -167,6 +173,13 @@ def test_composite_init_mat_slice_contraction(
     # Verify that all contracted matrix slices are identities
     target_prods = torch.eye(bond_dim)
     assert torch.allclose(prod_mats.abs(), target_prods)
+
+    # Do the same thing for default_eval, but with boundary vectors
+    ref_vec = torch.randn(bond_dim).to(core_tensor.dtype)
+    ref_vals = ref_vec.norm() ** 2
+    bound_vecs = torch.stack((ref_vec, ref_vec))
+    prod_vals = default_eval(fake_data, core_tensor, bound_vecs)
+    assert torch.allclose(prod_vals.abs(), ref_vals, atol=1e-4, rtol=1e-4)
 
 
 @settings(deadline=None)
