@@ -122,7 +122,7 @@ def test_model_forward(
         assert input_dim == 1
 
     # Check that the old method of evaluation gives identical results
-    old_log_probs = prob_mps(fake_data, old_eval=True)
+    old_log_probs = prob_mps(fake_data, fast_eval=True)
     assert torch.allclose(log_probs, old_log_probs)
 
 

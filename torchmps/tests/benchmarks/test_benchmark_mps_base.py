@@ -24,7 +24,12 @@
 
 import torch
 
-from torchmps.mps_base import contract_matseq, get_mat_slices, near_eye_init
+from torchmps.mps_base import (
+    contract_matseq,
+    get_mat_slices,
+    near_eye_init,
+    default_eval,
+)
 from torchmps.tests.test_mps_base import naive_contraction
 from torchmps.tests.utils_for_tests import group_name
 
@@ -151,3 +156,66 @@ def test_contract_matseq_large_seqlen(benchmark):
 def test_contract_matseq_large_bonddim(benchmark):
     """Benchmark contract_matseq with 10x larger bond dimensions"""
     contract_matseq_runner(benchmark, bond_dim=100)
+
+
+# DEFAULT_EVAL BENCHMARKS
+
+
+def default_eval_runner(
+    benchmark,
+    vec_input: bool = False,
+    uniform: bool = True,
+    input_dim: int = 10,
+    bond_dim: int = 10,
+    seq_len: int = 100,
+    batch: int = 100,
+):
+    # Create fake input data, core tensor, and boundary vectors
+    if uniform:
+        core_tensor = near_eye_init((input_dim, bond_dim, bond_dim))
+    else:
+        core_tensor = near_eye_init((seq_len, input_dim, bond_dim, bond_dim))
+    if vec_input:
+        fake_data = torch.randn(seq_len, batch, input_dim).abs()
+    else:
+        fake_data = torch.randint(input_dim, (seq_len, batch))
+    bound_vecs = torch.randn(2, bond_dim)
+
+    # Benchmark default_eval using input benchmark
+    benchmark(default_eval, fake_data, core_tensor, bound_vecs)
+
+
+@group_name("default_eval")
+def test_default_eval_base(benchmark):
+    """Benchmark default_eval with default values"""
+    default_eval_runner(benchmark)
+
+
+@group_name("default_eval")
+def test_default_eval_nonuniform(benchmark):
+    """Benchmark default_eval with non-uniform core tensors"""
+    default_eval_runner(benchmark, uniform=False)
+
+
+@group_name("default_eval")
+def test_default_eval_large_seqlen(benchmark):
+    """Benchmark default_eval with 10x longer sequences"""
+    default_eval_runner(benchmark, seq_len=1000)
+
+
+@group_name("default_eval")
+def test_default_eval_vecs_in(benchmark):
+    """Benchmark default_eval with continuous inputs"""
+    default_eval_runner(benchmark, vec_input=True)
+
+
+@group_name("default_eval")
+def test_default_eval_large_bonddim(benchmark):
+    """Benchmark default_eval with 10x larger bond dimensions"""
+    default_eval_runner(benchmark, bond_dim=100)
+
+
+@group_name("default_eval")
+def test_default_eval_large_inputdim(benchmark):
+    """Benchmark default_eval with 10x larger input dimensions"""
+    default_eval_runner(benchmark, input_dim=100)

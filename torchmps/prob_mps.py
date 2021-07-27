@@ -31,7 +31,7 @@ from torchmps.mps_base import (
     near_eye_init,
     get_mat_slices,
     get_log_norm,
-    default_eval,
+    slim_eval,
 )
 from torchmps.utils2 import phaseify, floor2
 
@@ -118,7 +118,7 @@ class ProbMPS(nn.Module):
         self.parallel_eval = parallel_eval
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor, old_eval: bool = False) -> Tensor:
+    def forward(self, input_data: Tensor, fast_eval: bool = False) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -126,9 +126,9 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            old_eval: Whether to use the older, slower, more flexible MPS
+            fast_eval: Whether to use the faster, more memory intensive MPS
                 evaluation function.
-                Default: ``False``
+                Default: ``True``
 
         Returns:
             log_probs: Vector with shape `(batch,)` giving the natural
@@ -136,7 +136,7 @@ class ProbMPS(nn.Module):
         """
         # TODO: Convert input to STensors first
 
-        if old_eval or self.parallel_eval:
+        if fast_eval or self.parallel_eval:
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -150,7 +150,7 @@ class ProbMPS(nn.Module):
                 mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
             )
         else:
-            psi_vals = default_eval(input_data, self.core_tensors, self.edge_vecs)
+            psi_vals = slim_eval(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm()
@@ -164,7 +164,7 @@ class ProbMPS(nn.Module):
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm
 
-    def loss(self, input_data: Tensor, old_eval: bool = False) -> Tensor:
+    def loss(self, input_data: Tensor, fast_eval: bool = True) -> Tensor:
         """
         Get the negative log likelihood loss for batch of input data
 
@@ -172,9 +172,9 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            old_eval: Whether to use the older, slower, more flexible MPS
+            fast_eval: Whether to use the faster, more memory intensive MPS
                 evaluation function.
-                Default: ``False``
+                Default: ``True``
 
         Returns:
             loss_val: Scalar value giving average of the negative log
@@ -190,7 +190,7 @@ class ProbMPS(nn.Module):
             state_dict["core_tensors"] = new_coretensors
             self.load_state_dict(state_dict)
 
-        return -torch.mean(self.forward(input_data))
+        return -torch.mean(self.forward(input_data, fast_eval=fast_eval))
 
     def log_norm(self) -> Tensor:
         r"""
@@ -303,7 +303,7 @@ class ProbUnifMPS(ProbMPS):
         self.parallel_eval = parallel_eval
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor, old_eval: bool = False) -> Tensor:
+    def forward(self, input_data: Tensor, fast_eval: bool = True) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -311,9 +311,9 @@ class ProbUnifMPS(ProbMPS):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            old_eval: Whether to use the older, slower, more flexible MPS
+            fast_eval: Whether to use the faster, more memory intensive MPS
                 evaluation function.
-                Default: ``False``
+                Default: ``True``
 
         Returns:
             log_probs: Vector with shape `(batch,)` giving the natural
@@ -321,7 +321,7 @@ class ProbUnifMPS(ProbMPS):
         """
         # TODO: Convert input to STensors first
 
-        if old_eval or self.parallel_eval:
+        if fast_eval or self.parallel_eval:
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -335,7 +335,7 @@ class ProbUnifMPS(ProbMPS):
                 mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
             )
         else:
-            psi_vals = default_eval(input_data, self.core_tensors, self.edge_vecs)
+            psi_vals = slim_eval(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm(len(input_data))
