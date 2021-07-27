@@ -33,7 +33,7 @@ from .utils_for_tests import complete_binary_dataset, allcloseish
 bool_st = st.booleans
 seq_len_st = partial(st.integers, 1, 1000)
 bond_dim_st = partial(st.integers, 1, 20)
-input_dim_st = partial(st.integers, 1, 10)
+input_dim_st = partial(st.integers, 2, 10)
 model_list = ["fixed-len", "uniform"]
 
 
@@ -120,6 +120,10 @@ def test_model_forward(
     assert log_probs.is_floating_point()
     if not torch.all(log_probs <= 0):
         assert input_dim == 1
+
+    # Check that the old method of evaluation gives identical results
+    old_log_probs = prob_mps(fake_data, old_eval=True)
+    assert torch.allclose(log_probs, old_log_probs)
 
 
 @parametrize_models()
