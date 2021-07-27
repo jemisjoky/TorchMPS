@@ -31,6 +31,7 @@ from torchmps.mps_base import (
     near_eye_init,
     get_mat_slices,
     get_log_norm,
+    default_eval,
 )
 from torchmps.utils2 import phaseify, floor2
 
@@ -117,7 +118,7 @@ class ProbMPS(nn.Module):
         self.parallel_eval = parallel_eval
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor) -> Tensor:
+    def forward(self, input_data: Tensor, old_eval: bool = False) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -125,6 +126,9 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
+            old_eval: Whether to use the older, slower, more flexible MPS
+                evaluation function.
+                Default: ``False``
 
         Returns:
             log_probs: Vector with shape `(batch,)` giving the natural
@@ -132,18 +136,21 @@ class ProbMPS(nn.Module):
         """
         # TODO: Convert input to STensors first
 
-        # Contract inputs with core tensors and add bias matrices
-        mat_slices = get_mat_slices(input_data, self.core_tensors)
-        if self.use_bias:
-            mat_slices = mat_slices + self.bias_mat[None, None]
+        if old_eval or self.parallel_eval:
+            # Contract inputs with core tensors and add bias matrices
+            mat_slices = get_mat_slices(input_data, self.core_tensors)
+            if self.use_bias:
+                mat_slices = mat_slices + self.bias_mat[None, None]
 
-        # Put the batch axis, since contract_matseq expects that
-        mat_slices.transpose_(0, 1)
+            # Put the batch axis, since contract_matseq expects that
+            mat_slices.transpose_(0, 1)
 
-        #  Contract all bond dims to get (unnormalized) prob amplitudes
-        psi_vals = contract_matseq(
-            mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
-        )
+            #  Contract all bond dims to get (unnormalized) prob amplitudes
+            psi_vals = contract_matseq(
+                mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
+            )
+        else:
+            psi_vals = default_eval(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm()
@@ -157,7 +164,7 @@ class ProbMPS(nn.Module):
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm
 
-    def loss(self, input_data: Tensor) -> Tensor:
+    def loss(self, input_data: Tensor, old_eval: bool = False) -> Tensor:
         """
         Get the negative log likelihood loss for batch of input data
 
@@ -165,6 +172,9 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
+            old_eval: Whether to use the older, slower, more flexible MPS
+                evaluation function.
+                Default: ``False``
 
         Returns:
             loss_val: Scalar value giving average of the negative log
@@ -293,7 +303,7 @@ class ProbUnifMPS(ProbMPS):
         self.parallel_eval = parallel_eval
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor) -> Tensor:
+    def forward(self, input_data: Tensor, old_eval: bool = False) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -301,6 +311,9 @@ class ProbUnifMPS(ProbMPS):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
+            old_eval: Whether to use the older, slower, more flexible MPS
+                evaluation function.
+                Default: ``False``
 
         Returns:
             log_probs: Vector with shape `(batch,)` giving the natural
@@ -308,18 +321,21 @@ class ProbUnifMPS(ProbMPS):
         """
         # TODO: Convert input to STensors first
 
-        # Contract inputs with core tensors and add bias matrices
-        mat_slices = get_mat_slices(input_data, self.core_tensors)
-        if self.use_bias:
-            mat_slices = mat_slices + self.bias_mat[None]
+        if old_eval or self.parallel_eval:
+            # Contract inputs with core tensors and add bias matrices
+            mat_slices = get_mat_slices(input_data, self.core_tensors)
+            if self.use_bias:
+                mat_slices = mat_slices + self.bias_mat[None]
 
-        # Put the batch axis, since contract_matseq expects that
-        mat_slices.transpose_(0, 1)
+            # Put the batch axis, since contract_matseq expects that
+            mat_slices.transpose_(0, 1)
 
-        #  Contract all bond dims to get (unnormalized) prob amplitudes
-        psi_vals = contract_matseq(
-            mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
-        )
+            #  Contract all bond dims to get (unnormalized) prob amplitudes
+            psi_vals = contract_matseq(
+                mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
+            )
+        else:
+            psi_vals = default_eval(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm(len(input_data))
