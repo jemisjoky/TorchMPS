@@ -31,7 +31,7 @@ from torchmps.mps_base import (
     contract_matseq,
     get_mat_slices,
     near_eye_init,
-    slim_eval,
+    slim_eval_fun,
 )
 from torchmps.utils2 import batch_broadcast, batch_to
 
@@ -174,11 +174,11 @@ def test_composite_init_mat_slice_contraction(
     target_prods = torch.eye(bond_dim)
     assert torch.allclose(prod_mats.abs(), target_prods)
 
-    # Do the same thing for slim_eval, but with boundary vectors
+    # Do the same thing for slim_eval_fun, but with boundary vectors
     ref_vec = torch.randn(bond_dim).to(core_tensor.dtype)
     ref_vals = ref_vec.norm() ** 2
     bound_vecs = torch.stack((ref_vec, ref_vec))
-    prod_vals = slim_eval(fake_data, core_tensor, bound_vecs)
+    prod_vals = slim_eval_fun(fake_data, core_tensor, bound_vecs)
     assert torch.allclose(prod_vals.abs(), ref_vals, atol=1e-4, rtol=1e-4)
 
 
