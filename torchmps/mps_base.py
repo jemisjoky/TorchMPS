@@ -41,7 +41,7 @@ from torchmps.utils2 import (
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
 
-def slim_eval(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) -> Tensor:
+def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) -> Tensor:
     r"""
     Evaluate MPS tensor elements relative to a batch of sequential inputs.
 

@@ -48,7 +48,6 @@ def init_model_and_data(
     input_dim,
     bond_dim,
     complex_params,
-    parallel_eval,
     use_bias,
     vec_input,
     big_batch,
@@ -56,11 +55,11 @@ def init_model_and_data(
     """Initialize probabilistic MPS and the sequence data it will be fed"""
     if model == "fixed-len":
         prob_mps = ProbMPS(
-            seq_len, input_dim, bond_dim, complex_params, parallel_eval, use_bias
+            seq_len, input_dim, bond_dim, complex_params, use_bias
         )
     elif model == "uniform":
         prob_mps = ProbUnifMPS(
-            input_dim, bond_dim, complex_params, parallel_eval, use_bias
+            input_dim, bond_dim, complex_params, use_bias
         )
 
     batch_dim = 25 if big_batch else 1
@@ -106,7 +105,6 @@ def test_model_forward(
         input_dim,
         bond_dim,
         complex_params,
-        parallel_eval,
         use_bias,
         vec_input,
         big_batch,
@@ -114,7 +112,7 @@ def test_model_forward(
     batch_dim = 25 if big_batch else 1
 
     # Call the model on the fake data, verify that it looks alright
-    log_probs = prob_mps(fake_data)
+    log_probs = prob_mps(fake_data, slim_eval=False, parallel_eval=parallel_eval)
     assert log_probs.shape == (batch_dim,)
     assert torch.all(log_probs.isfinite())
     assert log_probs.is_floating_point()
@@ -122,15 +120,15 @@ def test_model_forward(
         assert input_dim == 1
 
     # Check that the old method of evaluation gives identical results
-    old_log_probs = prob_mps(fake_data, fast_eval=True)
+    old_log_probs = prob_mps(fake_data, slim_eval=True)
     assert torch.allclose(log_probs, old_log_probs)
 
 
 @parametrize_models()
 # @settings(deadline=None)
-@given(input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st())
+@given(input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st(), bool_st())
 def test_valid_binary_probs(
-    model, seq_len, bond_dim, complex_params, parallel_eval, use_bias
+    model, seq_len, bond_dim, complex_params, slim_eval, parallel_eval, use_bias
 ):
     """
     Verify that for binary distributions, all probabilities sum up to 1
@@ -143,14 +141,13 @@ def test_valid_binary_probs(
         2,
         bond_dim,
         complex_params,
-        parallel_eval,
         use_bias,
         False,
         False,
     )
 
     # Get model probabilities and verify they are close to 1
-    probs = torch.exp(prob_mps(all_seqs))
+    probs = torch.exp(prob_mps(all_seqs, slim_eval=slim_eval, parallel_eval=parallel_eval))
     assert allcloseish(probs.sum(), 1.0, tol=5e-3)
 
 
@@ -165,6 +162,7 @@ def test_valid_binary_probs(
     bool_st(),
     bool_st(),
     bool_st(),
+    bool_st(),
 )
 def test_model_backward(
     model,
@@ -172,6 +170,7 @@ def test_model_backward(
     input_dim,
     bond_dim,
     complex_params,
+    slim_eval,
     parallel_eval,
     use_bias,
     vec_input,
@@ -187,7 +186,6 @@ def test_model_backward(
         input_dim,
         bond_dim,
         complex_params,
-        parallel_eval,
         use_bias,
         vec_input,
         big_batch,
@@ -196,7 +194,7 @@ def test_model_backward(
     old_params = tuple(p.detach().clone() for p in prob_mps.parameters())
 
     # Call the model on fake data, backpropagate, and take gradient step
-    loss = prob_mps.loss(fake_data)
+    loss = prob_mps.loss(fake_data, slim_eval=slim_eval, parallel_eval=parallel_eval)
     loss.backward()
     optimizer.step()
 

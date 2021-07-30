@@ -31,7 +31,7 @@ from torchmps.mps_base import (
     near_eye_init,
     get_mat_slices,
     get_log_norm,
-    slim_eval,
+    slim_eval_fun,
 )
 from torchmps.utils2 import phaseify, floor2
 
@@ -77,9 +77,6 @@ class ProbMPS(nn.Module):
         complex_params: Whether model parameters are complex or real. The
             former allows more expressivity, but is less common in Pytorch.
             Default: ``False``
-        parallel_eval: Whether to force parallel contraction of tensor
-            network. This leads to greater total computational cost, but
-            can be faster in the presence of GPUs. Default: ``False``
         use_bias: Whether to use a trainable bias matrix in evaluation.
             Default: ``False``
     """
@@ -90,7 +87,6 @@ class ProbMPS(nn.Module):
         input_dim: int,
         bond_dim: int,
         complex_params: bool = False,
-        parallel_eval: bool = False,
         use_bias: bool = False,
     ) -> None:
         super().__init__()
@@ -115,10 +111,9 @@ class ProbMPS(nn.Module):
 
         # Set other MPS attributes
         self.complex_params = complex_params
-        self.parallel_eval = parallel_eval
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor, fast_eval: bool = False) -> Tensor:
+    def forward(self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -126,9 +121,13 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            fast_eval: Whether to use the faster, more memory intensive MPS
-                evaluation function.
-                Default: ``True``
+            slim_eval: Whether to use a less memory intensive MPS 
+                evaluation function, useful for larger inputs.
+                Default: ``False``
+            parallel_eval: Whether to use a more memory intensive parallel
+                MPS evaluation function, useful for smaller models. 
+                Overrides `slim_eval` when both are requested.
+                Default: ``False``
 
         Returns:
             log_probs: Vector with shape `(batch,)` giving the natural
@@ -136,7 +135,7 @@ class ProbMPS(nn.Module):
         """
         # TODO: Convert input to STensors first
 
-        if fast_eval or self.parallel_eval:
+        if slim_eval or parallel_eval:
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -147,10 +146,10 @@ class ProbMPS(nn.Module):
 
             #  Contract all bond dims to get (unnormalized) prob amplitudes
             psi_vals = contract_matseq(
-                mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
+                mat_slices, self.edge_vecs[0], self.edge_vecs[1], parallel_eval
             )
         else:
-            psi_vals = slim_eval(input_data, self.core_tensors, self.edge_vecs)
+            psi_vals = slim_eval_fun(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm()
@@ -164,7 +163,7 @@ class ProbMPS(nn.Module):
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm
 
-    def loss(self, input_data: Tensor, fast_eval: bool = True) -> Tensor:
+    def loss(self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False) -> Tensor:
         """
         Get the negative log likelihood loss for batch of input data
 
@@ -172,9 +171,13 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            fast_eval: Whether to use the faster, more memory intensive MPS
-                evaluation function.
-                Default: ``True``
+            slim_eval: Whether to use a less memory intensive MPS 
+                evaluation function, useful for larger inputs.
+                Default: ``False``
+            parallel_eval: Whether to use a more memory intensive parallel
+                MPS evaluation function, useful for smaller models. 
+                Overrides `slim_eval` when both are requested.
+                Default: ``False``
 
         Returns:
             loss_val: Scalar value giving average of the negative log
@@ -190,7 +193,7 @@ class ProbMPS(nn.Module):
             state_dict["core_tensors"] = new_coretensors
             self.load_state_dict(state_dict)
 
-        return -torch.mean(self.forward(input_data, fast_eval=fast_eval))
+        return -torch.mean(self.forward(input_data, slim_eval=slim_eval, parallel_eval=parallel_eval))
 
     def log_norm(self) -> Tensor:
         r"""
@@ -243,12 +246,11 @@ class ProbUnifMPS(ProbMPS):
     vectors :math:`h_t` are updated according to:
 
     .. math::
-        h_t = (A_t[x_t] + B) h_{t-1},
+        h_t = (A[x_t] + B) h_{t-1},
 
     with :math:`h_0 := \alpha` (for :math:`\alpha, \omega` trainable
-    parameter vectors), :math:`A_t[i]` the i'th matrix slice of a
-    third-order core tensor for the t'th input, and :math:`B` an optional
-    bias matrix.
+    parameter vectors), :math:`A[i]` the i'th matrix slice of the
+    third-order MPS core tensor, and :math:`B` an optional bias matrix.
 
     Note that calling a :class:`ProbUnifMPS` instance with given input will
     return the **logarithm** of the input probabilities, to avoid underflow
@@ -265,9 +267,6 @@ class ProbUnifMPS(ProbMPS):
         complex_params: Whether model parameters are complex or real. The
             former allows more expressivity, but is less common in Pytorch.
             Default: ``False``
-        parallel_eval: Whether to force parallel contraction of tensor
-            network. This leads to greater total computational cost, but
-            can be faster in the presence of GPUs. Default: ``False``
         use_bias: Whether to use a trainable bias matrix in evaluation.
             Default: ``False``
     """
@@ -277,7 +276,6 @@ class ProbUnifMPS(ProbMPS):
         input_dim: int,
         bond_dim: int,
         complex_params: bool = False,
-        parallel_eval: bool = False,
         use_bias: bool = False,
     ) -> None:
         super(ProbMPS, self).__init__()
@@ -300,10 +298,9 @@ class ProbUnifMPS(ProbMPS):
 
         # Set other MPS attributes
         self.complex_params = complex_params
-        self.parallel_eval = parallel_eval
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor, fast_eval: bool = True) -> Tensor:
+    def forward(self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -311,9 +308,13 @@ class ProbUnifMPS(ProbMPS):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            fast_eval: Whether to use the faster, more memory intensive MPS
-                evaluation function.
-                Default: ``True``
+            slim_eval: Whether to use a less memory intensive MPS 
+                evaluation function, useful for larger inputs.
+                Default: ``False``
+            parallel_eval: Whether to use a more memory intensive parallel
+                MPS evaluation function, useful for smaller models. 
+                Overrides `slim_eval` when both are requested.
+                Default: ``False``
 
         Returns:
             log_probs: Vector with shape `(batch,)` giving the natural
@@ -321,7 +322,7 @@ class ProbUnifMPS(ProbMPS):
         """
         # TODO: Convert input to STensors first
 
-        if fast_eval or self.parallel_eval:
+        if not slim_eval or parallel_eval:
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -332,10 +333,10 @@ class ProbUnifMPS(ProbMPS):
 
             #  Contract all bond dims to get (unnormalized) prob amplitudes
             psi_vals = contract_matseq(
-                mat_slices, self.edge_vecs[0], self.edge_vecs[1], self.parallel_eval
+                mat_slices, self.edge_vecs[0], self.edge_vecs[1], parallel_eval
             )
         else:
-            psi_vals = slim_eval(input_data, self.core_tensors, self.edge_vecs)
+            psi_vals = slim_eval_fun(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm(len(input_data))
