@@ -54,13 +54,9 @@ def init_model_and_data(
 ):
     """Initialize probabilistic MPS and the sequence data it will be fed"""
     if model == "fixed-len":
-        prob_mps = ProbMPS(
-            seq_len, input_dim, bond_dim, complex_params, use_bias
-        )
+        prob_mps = ProbMPS(seq_len, input_dim, bond_dim, complex_params, use_bias)
     elif model == "uniform":
-        prob_mps = ProbUnifMPS(
-            input_dim, bond_dim, complex_params, use_bias
-        )
+        prob_mps = ProbUnifMPS(input_dim, bond_dim, complex_params, use_bias)
 
     batch_dim = 25 if big_batch else 1
     if vec_input:
@@ -147,7 +143,9 @@ def test_valid_binary_probs(
     )
 
     # Get model probabilities and verify they are close to 1
-    probs = torch.exp(prob_mps(all_seqs, slim_eval=slim_eval, parallel_eval=parallel_eval))
+    probs = torch.exp(
+        prob_mps(all_seqs, slim_eval=slim_eval, parallel_eval=parallel_eval)
+    )
     assert allcloseish(probs.sum(), 1.0, tol=5e-3)
 
 

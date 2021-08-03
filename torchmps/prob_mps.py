@@ -20,7 +20,6 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Uniform and non-uniform probabilistic MPS classes"""
-# from typing import Union, Sequence, Optional
 from math import sqrt
 
 import torch
@@ -34,8 +33,6 @@ from torchmps.mps_base import (
     slim_eval_fun,
 )
 from torchmps.utils2 import phaseify, floor2
-
-# TensorSeq = Union[Tensor, Sequence[Tensor]]
 
 
 class ProbMPS(nn.Module):
@@ -113,7 +110,9 @@ class ProbMPS(nn.Module):
         self.complex_params = complex_params
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False) -> Tensor:
+    def forward(
+        self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False
+    ) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -121,11 +120,11 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            slim_eval: Whether to use a less memory intensive MPS 
+            slim_eval: Whether to use a less memory intensive MPS
                 evaluation function, useful for larger inputs.
                 Default: ``False``
             parallel_eval: Whether to use a more memory intensive parallel
-                MPS evaluation function, useful for smaller models. 
+                MPS evaluation function, useful for smaller models.
                 Overrides `slim_eval` when both are requested.
                 Default: ``False``
 
@@ -163,7 +162,9 @@ class ProbMPS(nn.Module):
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm
 
-    def loss(self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False) -> Tensor:
+    def loss(
+        self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False
+    ) -> Tensor:
         """
         Get the negative log likelihood loss for batch of input data
 
@@ -171,11 +172,11 @@ class ProbMPS(nn.Module):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            slim_eval: Whether to use a less memory intensive MPS 
+            slim_eval: Whether to use a less memory intensive MPS
                 evaluation function, useful for larger inputs.
                 Default: ``False``
             parallel_eval: Whether to use a more memory intensive parallel
-                MPS evaluation function, useful for smaller models. 
+                MPS evaluation function, useful for smaller models.
                 Overrides `slim_eval` when both are requested.
                 Default: ``False``
 
@@ -193,7 +194,9 @@ class ProbMPS(nn.Module):
             state_dict["core_tensors"] = new_coretensors
             self.load_state_dict(state_dict)
 
-        return -torch.mean(self.forward(input_data, slim_eval=slim_eval, parallel_eval=parallel_eval))
+        return -torch.mean(
+            self.forward(input_data, slim_eval=slim_eval, parallel_eval=parallel_eval)
+        )
 
     def log_norm(self) -> Tensor:
         r"""
@@ -300,7 +303,9 @@ class ProbUnifMPS(ProbMPS):
         self.complex_params = complex_params
         self.rescale_factor = None
 
-    def forward(self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False) -> Tensor:
+    def forward(
+        self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False
+    ) -> Tensor:
         """
         Get the log probabilities of batch of input data
 
@@ -308,11 +313,11 @@ class ProbUnifMPS(ProbMPS):
             input_data: Sequential with shape `(seq_len, batch)`, for
                 discrete inputs, or shape `(seq_len, batch, input_dim)`,
                 for vector inputs.
-            slim_eval: Whether to use a less memory intensive MPS 
+            slim_eval: Whether to use a less memory intensive MPS
                 evaluation function, useful for larger inputs.
                 Default: ``False``
             parallel_eval: Whether to use a more memory intensive parallel
-                MPS evaluation function, useful for smaller models. 
+                MPS evaluation function, useful for smaller models.
                 Overrides `slim_eval` when both are requested.
                 Default: ``False``
 
