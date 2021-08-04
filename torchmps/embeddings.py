@@ -24,7 +24,39 @@ from typing import Union, Optional, Callable  # , Sequence
 
 import torch
 
-from utils2 import einsum
+from .utils2 import einsum
+
+
+class DataDomain:
+    r"""
+    Defines a domain for input data to a probabilistic model
+
+    DataDomain supports both continuous and discrete domains, with the
+    latter always associated with indices of the form `0, 1, ..., max_val-1`.
+    For continuous domains, real intervals of the form `[min_val, max_val]`
+    can be defined.
+
+    Args:
+        continuous (bool): Whether data domain is continuous or discrete
+        max_val (int or float): For discrete domains, this is the number of
+            indices to use, with the maximum index being max_val - 1. For
+            continuous domains, this is the endpoint of the real interval.
+        min_val (float): Only used for continuous domains, this is the
+            startpoint of the real interval.
+    """
+
+    def __init__(
+        self, continuous: bool, max_val: Union[int, float], min_val: Optional[float] = None
+    ):
+        # Check defining input for correctness
+        if continuous:
+            assert max_val > min_val
+            self.min_val = min_val
+        else:
+            assert max_val >= 0
+
+        self.max_val = max_val
+        self.continuous = continuous
 
 
 class FixedEmbedding:
@@ -48,7 +80,7 @@ class FixedEmbedding:
         self.domain = data_domain
         self.emb_fun = emb_fun
         self.emb_dim = emb_dim
-        self.get_lambda()
+        self.make_lambda()
 
         # Initialize parameters to be set later
         self.num_points = None
@@ -97,35 +129,3 @@ class FixedEmbedding:
         Embed input data via the user-specified embedding function
         """
         return self.emb_fun(input_data)
-
-
-class DataDomain:
-    r"""
-    Defines a domain for input data to a probabilistic model
-
-    DataDomain supports both continuous and discrete domains, with the
-    latter always associated with indices of the form `0, 1, ..., max_val-1`.
-    For continuous domains, real intervals of the form `[min_val, max_val]`
-    can be defined.
-
-    Args:
-        continuous (bool): Whether data domain is continuous or discrete
-        max_val (int or float): For discrete domains, this is the number of
-            indices to use, with the maximum index being max_val - 1. For
-            continuous domains, this is the endpoint of the real interval.
-        min_val (float): Only used for continuous domains, this is the
-            startpoint of the real interval.
-    """
-
-    def __init__(
-        self, continuous: bool, max_val: Union[int, float], min_val: Optional[float]
-    ):
-        # Check defining input for correctness
-        if self.continuous:
-            assert max_val > min_val
-            self.min_val = min_val
-        else:
-            assert max_val >= 0
-
-        self.max_val = max_val
-        self.continuous = continuous
