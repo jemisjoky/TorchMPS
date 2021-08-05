@@ -332,7 +332,10 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
 
 
 def get_log_norm(
-    core_tensor: Tensor, boundary_vecs: Tensor, length: Optional[int] = None
+    core_tensor: Tensor,
+    boundary_vecs: Tensor,
+    length: Optional[int] = None,
+    lamb_mat: Optional[Tensor] = None,
 ) -> Tensor:
     r"""
     Compute the log (squared) L2 norm of tensor described by MPS model
@@ -357,7 +360,9 @@ def get_log_norm(
         length: In case of single core tensor, specifies the length for
             which the log L2 norm is computed. Non-negative values give
             fixed-len log norms, while -1 gives arbitrary-len log norm.
-            Default: ``None``
+        lamb_mat: Positive semidefinite matrix :math:`\Lambda` which is used
+            in the presence of an input embedding to marginalize over all all
+            values of the input domain.
 
     Returns:
         l_norm: Scalar value giving the log squared L2 norm of the
@@ -368,6 +373,7 @@ def get_log_norm(
     assert core_tensor.ndim in (3, 4)
     assert boundary_vecs.shape[-1] == core_tensor.shape[-1]
     assert uniform or length in (None, core_tensor.shape[0])
+    assert lamb_mat is None or lamb_mat.ndim <= 2
     assert not (uniform and length is None)
     fixed_len = not uniform or length != -1
 
@@ -379,10 +385,21 @@ def get_log_norm(
     if uniform:
         core_tensor = (core_tensor,) * length
 
+    # Define transfer operator function for different types of lambda matrix
+    if lamb_mat is None:
+        # In the following, "dm" = "density matrix", "ct" = "core tensor"
+        t_op = lambda dm, ct: einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+    elif lamb_mat.ndim == 0:
+        t_op = lambda dm, ct: lamb_mat * einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+    elif lamb_mat.ndim == 1:
+        t_op = lambda dm, ct: einsum("i,ilr,lp,ipq->rq", lamb_mat, ct, dm, ct.conj())
+    elif lamb_mat.ndim == 2:
+        t_op = lambda dm, ct: einsum("ij,ilr,lp,jpq->rq", lamb_mat, ct, dm, ct.conj())
+
     # Function for applying rightward transfer operator to density mat
     def transfer_op(core_t, d_mat, l_norm, l_sum=None):
         # Update density operator, rescale to have unit trace
-        d_mat = einsum("ilr,lp,ipq->rq", core_t, d_mat, core_t.conj())
+        d_mat = t_op(d_mat, core_t)
         trace = hermitian_trace(d_mat)
         l_norm = l_norm + torch.log(trace)
         d_mat = d_mat / trace
