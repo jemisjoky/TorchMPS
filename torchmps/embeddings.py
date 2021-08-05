@@ -46,7 +46,10 @@ class DataDomain:
     """
 
     def __init__(
-        self, continuous: bool, max_val: Union[int, float], min_val: Optional[float] = None
+        self,
+        continuous: bool,
+        max_val: Union[int, float],
+        min_val: Optional[float] = None,
     ):
         # Check defining input for correctness
         if continuous:
@@ -68,18 +71,16 @@ class FixedEmbedding:
             returning tensor of embedded vectors, which has one additional
             axis in the last position. These values must be either integers,
             for discrete data domains, or reals, for continuous data domains.
-        emb_dim (int): Dimension of the embedding vectors.
         data_domain (DataDomain): Object which specifies the domain on which
             the data fed to the embedding function is defined.
     """
 
-    def __init__(self, emb_fun: Callable, emb_dim: int, data_domain: DataDomain):
+    def __init__(self, emb_fun: Callable, data_domain: DataDomain):
         assert hasattr(emb_fun, "__call__")
 
         # Save defining data, compute lambda matrix
         self.domain = data_domain
         self.emb_fun = emb_fun
-        self.emb_dim = emb_dim
         self.make_lambda()
 
         # Initialize parameters to be set later
@@ -97,7 +98,9 @@ class FixedEmbedding:
             )
             self.num_points = num_points
             emb_vecs = self.emb_fun(points)
-            assert emb_vecs.shape == (num_points, self.emb_dim)
+            assert emb_vecs.ndim == 2
+            self.emb_dim = emb_vecs.shape[1]
+            assert emb_vecs.shape[0] == num_points
 
             # Get rank-1 matrices for each point, then numerically integrate
             emb_mats = einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
@@ -106,7 +109,9 @@ class FixedEmbedding:
         else:
             points = torch.arange(self.domain.max_val).long()
             emb_vecs = self.emb_fun(points)
-            assert emb_vecs.shape == (self.domain.max_val, self.emb_dim)
+            assert emb_vecs.ndim == 2
+            self.emb_dim = emb_vecs.shape[1]
+            assert emb_vecs.shape[0] == self.domain.max_val
 
             # Get rank-1 matrices for each point, then sum together
             emb_mats = einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())

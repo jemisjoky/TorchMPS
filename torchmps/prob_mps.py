@@ -21,6 +21,7 @@
 
 """Uniform and non-uniform probabilistic MPS classes"""
 from math import sqrt
+from typing import Optional, Callable
 
 import torch
 from torch import Tensor, nn
@@ -33,6 +34,7 @@ from torchmps.mps_base import (
     slim_eval_fun,
 )
 from torchmps.utils2 import phaseify, floor2
+from torchmps.embeddings import DataDomain, FixedEmbedding
 
 
 class ProbMPS(nn.Module):
@@ -76,6 +78,16 @@ class ProbMPS(nn.Module):
             Default: ``False``
         use_bias: Whether to use a trainable bias matrix in evaluation.
             Default: ``False``
+        embed_fun: Function which embeds discrete or continous scalar values
+            into vectors of dimension `input_dim`. Must be able to take in a
+            tensor of any order `n` and output a tensor of order `n+1`, where
+            the scalar values of the input are represented as vectors in the
+            *last* axis of the output.
+            Default: ``None`` (no embedding function)
+        domain: Instance of the `DataDomain` class, which specifies whether
+            the input data domain is continuous vs. discrete, and what range
+            of values the domain takes.
+            Default: ``None``
     """
 
     def __init__(
@@ -85,6 +97,8 @@ class ProbMPS(nn.Module):
         bond_dim: int,
         complex_params: bool = False,
         use_bias: bool = False,
+        embed_fun: Optional[Callable] = None,
+        domain: Optional[DataDomain] = None,
     ) -> None:
         super().__init__()
         assert min(seq_len, input_dim, bond_dim) > 0
@@ -108,7 +122,14 @@ class ProbMPS(nn.Module):
 
         # Set other MPS attributes
         self.complex_params = complex_params
-        self.rescale_factor = None
+        self.rescale_factor = None  # Hacky way of stabilizing evaluation
+        self.embedding = None
+
+        # Set up embedding object if desired
+        if embed_fun is not None:
+            assert domain is not None
+            self.embedding = FixedEmbedding(embed_fun, domain)
+            assert self.embedding.emb_dim == input_dim
 
     def forward(
         self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False
@@ -134,7 +155,12 @@ class ProbMPS(nn.Module):
         """
         # TODO: Convert input to STensors first
 
+        # Apply embedding function if it is defined
+        if self.embedding is not None:
+            input_data = self.embedding.embed(input_data)
+
         if slim_eval or parallel_eval:
+
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -218,7 +244,10 @@ class ProbMPS(nn.Module):
         else:
             core_tensors = self.core_tensors
 
-        return get_log_norm(core_tensors, self.edge_vecs)
+        # Account for non-trivial lambda function in the embedding
+        lamb_mat = None if self.embedding is None else self.embedding.lamb_mat
+
+        return get_log_norm(core_tensors, self.edge_vecs, lamb_mat=lamb_mat)
 
     @property
     def seq_len(self):
@@ -272,6 +301,16 @@ class ProbUnifMPS(ProbMPS):
             Default: ``False``
         use_bias: Whether to use a trainable bias matrix in evaluation.
             Default: ``False``
+        embed_fun: Function which embeds discrete or continous scalar values
+            into vectors of dimension `input_dim`. Must be able to take in a
+            tensor of any order `n` and output a tensor of order `n+1`, where
+            the scalar values of the input are represented as vectors in the
+            *last* axis of the output.
+            Default: ``None`` (no embedding function)
+        domain: Instance of the `DataDomain` class, which specifies whether
+            the input data domain is continuous vs. discrete, and what range
+            of values the domain takes.
+            Default: ``None``
     """
 
     def __init__(
@@ -280,6 +319,8 @@ class ProbUnifMPS(ProbMPS):
         bond_dim: int,
         complex_params: bool = False,
         use_bias: bool = False,
+        embed_fun: Optional[Callable] = None,
+        domain: Optional[DataDomain] = None,
     ) -> None:
         super(ProbMPS, self).__init__()
         assert min(input_dim, bond_dim) > 0
@@ -302,6 +343,13 @@ class ProbUnifMPS(ProbMPS):
         # Set other MPS attributes
         self.complex_params = complex_params
         self.rescale_factor = None
+        self.embedding = None
+
+        # Set up embedding object if desired
+        if embed_fun is not None:
+            assert domain is not None
+            self.embedding = FixedEmbedding(embed_fun, domain)
+            assert self.embedding.emb_dim == input_dim
 
     def forward(
         self, input_data: Tensor, slim_eval: bool = False, parallel_eval: bool = False
@@ -326,6 +374,10 @@ class ProbUnifMPS(ProbMPS):
                 logarithm of the probability of each input sequence.
         """
         # TODO: Convert input to STensors first
+
+        # Apply embedding function if it is defined
+        if self.embedding is not None:
+            input_data = self.embedding.embed(input_data)
 
         if not slim_eval or parallel_eval:
             # Contract inputs with core tensors and add bias matrices
@@ -375,7 +427,12 @@ class ProbUnifMPS(ProbMPS):
         else:
             core_tensors = self.core_tensors
 
-        return get_log_norm(core_tensors, self.edge_vecs, length=data_len)
+        # Account for non-trivial lambda function in the embedding
+        lamb_mat = None if self.embedding is None else self.embedding.lamb_mat
+
+        return get_log_norm(
+            core_tensors, self.edge_vecs, lamb_mat=lamb_mat, length=data_len
+        )
 
     @property
     def input_dim(self):
