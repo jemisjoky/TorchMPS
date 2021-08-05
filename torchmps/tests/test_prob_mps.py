@@ -27,6 +27,7 @@ import pytest
 from hypothesis import given, settings, strategies as st
 
 from torchmps import ProbMPS, ProbUnifMPS
+from torchmps.embeddings import DataDomain, onehot_embed
 from .utils_for_tests import complete_binary_dataset, allcloseish
 
 # Frequently used Hypothesis strategies
@@ -51,12 +52,38 @@ def init_model_and_data(
     use_bias,
     vec_input,
     big_batch,
+    embed_fun=None,
+    continuous=None,
 ):
     """Initialize probabilistic MPS and the sequence data it will be fed"""
+    # Account for case when we want an embedding
+    if embed_fun is not None:
+        if continuous:
+            domain = DataDomain(True, 1, 0)
+        else:
+            domain = DataDomain(False, input_dim)
+    else:
+        domain = None
+
     if model == "fixed-len":
-        prob_mps = ProbMPS(seq_len, input_dim, bond_dim, complex_params, use_bias)
+        prob_mps = ProbMPS(
+            seq_len,
+            input_dim,
+            bond_dim,
+            complex_params,
+            use_bias,
+            embed_fun=embed_fun,
+            domain=domain,
+        )
     elif model == "uniform":
-        prob_mps = ProbUnifMPS(input_dim, bond_dim, complex_params, use_bias)
+        prob_mps = ProbUnifMPS(
+            input_dim,
+            bond_dim,
+            complex_params,
+            use_bias,
+            embed_fun=embed_fun,
+            domain=domain,
+        )
 
     batch_dim = 25 if big_batch else 1
     if vec_input:
@@ -66,6 +93,18 @@ def init_model_and_data(
         fake_data = torch.randint(input_dim, (seq_len, batch_dim))
 
     return prob_mps, fake_data
+
+
+def default_model_data(model, embed_fun=None, continuous=None):
+    """Default values for model and data"""
+    return init_model_and_data(
+        model, 14, 4, 5, True, False, False, True, embed_fun, continuous
+    )
+
+
+def rescale_embed(input, dim=4):
+    """Dummy discrete embedding function that should do nothing"""
+    return 3.14 * onehot_embed(input, dim)
 
 
 @parametrize_models()
@@ -122,9 +161,18 @@ def test_model_forward(
 
 @parametrize_models()
 # @settings(deadline=None)
-@given(input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st(), bool_st())
+@given(
+    input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st(), bool_st(), bool_st()
+)
 def test_valid_binary_probs(
-    model, seq_len, bond_dim, complex_params, slim_eval, parallel_eval, use_bias
+    model,
+    seq_len,
+    bond_dim,
+    complex_params,
+    slim_eval,
+    parallel_eval,
+    use_bias,
+    use_embed,
 ):
     """
     Verify that for binary distributions, all probabilities sum up to 1
@@ -139,6 +187,8 @@ def test_valid_binary_probs(
         complex_params,
         use_bias,
         False,
+        False,
+        (partial(rescale_embed, dim=2) if use_embed else None),
         False,
     )
 
@@ -214,3 +264,14 @@ def test_model_backward(
             param_diff = True
 
     assert param_diff
+
+
+@parametrize_models()
+def test_trivial_embedding(model):
+    """
+    Ensure an embedding that rescales by a constant gives same probabilities
+    """
+    normal_mps, fake_data = default_model_data(model)
+    embed_mps, _ = default_model_data(model, rescale_embed, False)
+
+    assert allcloseish(normal_mps(fake_data), embed_mps(fake_data), tol=0.05)

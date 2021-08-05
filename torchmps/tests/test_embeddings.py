@@ -25,7 +25,7 @@ from functools import partial
 import torch
 from hypothesis import given, strategies as st
 
-from torchmps.embeddings import DataDomain, FixedEmbedding
+from torchmps.embeddings import DataDomain, FixedEmbedding, onehot_embed
 
 
 @given(st.booleans(), st.floats(-100, 100), st.floats(0.0001, 1000))
@@ -44,14 +44,6 @@ def test_data_domain(continuous, max_val, length):
         assert data_domain.min_val == min_val
     else:
         assert not hasattr(data_domain, "min_val")
-
-
-def onehot_embed(tensor, emb_dim):
-    """Trivial one-hot embedding"""
-    shape = tensor.shape + (emb_dim,)
-    output = torch.zeros(*shape)
-    output.scatter_(-1, tensor[..., None], 1)
-    return output
 
 
 @given(st.integers(1, 100))

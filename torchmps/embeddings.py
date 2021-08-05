@@ -134,3 +134,13 @@ class FixedEmbedding:
         Embed input data via the user-specified embedding function
         """
         return self.emb_fun(input_data)
+
+
+def onehot_embed(tensor, emb_dim):
+    """
+    Function giving trivial one-hot embedding
+    """
+    shape = tensor.shape + (emb_dim,)
+    output = torch.zeros(*shape)
+    output.scatter_(-1, tensor[..., None], 1)
+    return output
