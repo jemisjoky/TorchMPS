@@ -155,8 +155,10 @@ def test_model_forward(
         assert input_dim == 1
 
     # Check that the old method of evaluation gives identical results
-    old_log_probs = prob_mps(fake_data, slim_eval=True)
-    assert torch.allclose(log_probs, old_log_probs)
+    # Note that the model doesn't support bias matrices with slim_eval
+    if not use_bias:
+        old_log_probs = prob_mps(fake_data, slim_eval=True)
+        assert torch.allclose(log_probs, old_log_probs)
 
 
 @parametrize_models()
@@ -177,6 +179,10 @@ def test_valid_binary_probs(
     """
     Verify that for binary distributions, all probabilities sum up to 1
     """
+    # Note: model doesn't support bias matrices with slim_eval
+    if use_bias and slim_eval:
+        return
+
     # Initialize dataset and model
     all_seqs = complete_binary_dataset(seq_len).T
     prob_mps, _ = init_model_and_data(
@@ -227,6 +233,10 @@ def test_model_backward(
     """
     Verify that model backward pass runs and updates model params
     """
+    # Note: model doesn't support bias matrices with slim_eval
+    if use_bias and slim_eval:
+        return
+
     # Initialize probabilistic MPS, dataset, and optimizer
     prob_mps, fake_data = init_model_and_data(
         model,

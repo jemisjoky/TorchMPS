@@ -103,8 +103,8 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
 
         # Rescale vectors, update log_scales
         rescale = vecs.abs().sum(dim=-1, keepdim=True) / bond_dim
-        log_scales += rescale.log()[:, 0, 0]
-        vecs /= rescale
+        log_scales = log_scales + rescale.log()[:, 0, 0]
+        vecs = vecs / rescale
 
     # Contract with the right boundary vector, return result
     contraction = torch.matmul(vecs.squeeze(dim=1), bound_vecs[1][:, None])
@@ -293,8 +293,8 @@ def mat_reduce_par(matrices: Tensor) -> Tuple[Tensor, Tensor]:
 
         # Rescale matrices and update log_scale
         rescales = matrices.abs().sum(dim=(-2, -1), keepdim=True) / bond_dim
-        log_scale += rescales.log().sum(dim=-3)
-        matrices /= rescales
+        log_scale = log_scale + rescales.log().sum(dim=-3)
+        matrices = matrices / rescales
 
     return matrices.squeeze(dim=s_dim), log_scale
 
@@ -326,8 +326,8 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
         # Rescale and update the log scale factor
         av_norm = sqrt(prod(product.shape[-2:]))
         rescale = product.abs().sum(dim=(-2, -1), keepdim=True) / av_norm
-        log_scale += torch.log(rescale)
-        product /= rescale
+        log_scale = log_scale + torch.log(rescale)
+        product = product / rescale
 
     # Revert to original form before returning
     product = product.transpose(-2, -1) if r2l else product

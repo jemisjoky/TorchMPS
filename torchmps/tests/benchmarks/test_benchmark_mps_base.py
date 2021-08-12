@@ -28,7 +28,7 @@ from torchmps.mps_base import (
     contract_matseq,
     get_mat_slices,
     near_eye_init,
-    default_eval,
+    slim_eval_fun,
 )
 from torchmps.tests.test_mps_base import naive_contraction
 from torchmps.tests.utils_for_tests import group_name
@@ -161,7 +161,7 @@ def test_contract_matseq_large_bonddim(benchmark):
 # DEFAULT_EVAL BENCHMARKS
 
 
-def default_eval_runner(
+def slim_eval_runner(
     benchmark,
     vec_input: bool = False,
     uniform: bool = True,
@@ -181,41 +181,41 @@ def default_eval_runner(
         fake_data = torch.randint(input_dim, (seq_len, batch))
     bound_vecs = torch.randn(2, bond_dim)
 
-    # Benchmark default_eval using input benchmark
-    benchmark(default_eval, fake_data, core_tensor, bound_vecs)
+    # Benchmark slim_eval_fun using input benchmark
+    benchmark(slim_eval_fun, fake_data, core_tensor, bound_vecs)
 
 
-@group_name("default_eval")
-def test_default_eval_base(benchmark):
-    """Benchmark default_eval with default values"""
-    default_eval_runner(benchmark)
+@group_name("slim_eval")
+def test_slim_eval_base(benchmark):
+    """Benchmark slim_eval_fun with default values"""
+    slim_eval_runner(benchmark)
 
 
-@group_name("default_eval")
-def test_default_eval_nonuniform(benchmark):
-    """Benchmark default_eval with non-uniform core tensors"""
-    default_eval_runner(benchmark, uniform=False)
+@group_name("slim_eval")
+def test_slim_eval_nonuniform(benchmark):
+    """Benchmark slim_eval_fun with non-uniform core tensors"""
+    slim_eval_runner(benchmark, uniform=False)
 
 
-@group_name("default_eval")
-def test_default_eval_large_seqlen(benchmark):
-    """Benchmark default_eval with 10x longer sequences"""
-    default_eval_runner(benchmark, seq_len=1000)
+@group_name("slim_eval")
+def test_slim_eval_large_seqlen(benchmark):
+    """Benchmark slim_eval_fun with 10x longer sequences"""
+    slim_eval_runner(benchmark, seq_len=1000)
 
 
-@group_name("default_eval")
-def test_default_eval_vecs_in(benchmark):
-    """Benchmark default_eval with continuous inputs"""
-    default_eval_runner(benchmark, vec_input=True)
+@group_name("slim_eval")
+def test_slim_eval_vecs_in(benchmark):
+    """Benchmark slim_eval_fun with continuous inputs"""
+    slim_eval_runner(benchmark, vec_input=True)
 
 
-@group_name("default_eval")
-def test_default_eval_large_bonddim(benchmark):
-    """Benchmark default_eval with 10x larger bond dimensions"""
-    default_eval_runner(benchmark, bond_dim=100)
+@group_name("slim_eval")
+def test_slim_eval_large_bonddim(benchmark):
+    """Benchmark slim_eval_fun with 10x larger bond dimensions"""
+    slim_eval_runner(benchmark, bond_dim=100)
 
 
-@group_name("default_eval")
-def test_default_eval_large_inputdim(benchmark):
-    """Benchmark default_eval with 10x larger input dimensions"""
-    default_eval_runner(benchmark, input_dim=100)
+@group_name("slim_eval")
+def test_slim_eval_large_inputdim(benchmark):
+    """Benchmark slim_eval_fun with 10x larger input dimensions"""
+    slim_eval_runner(benchmark, input_dim=100)

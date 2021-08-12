@@ -45,7 +45,7 @@ def prob_eval_runner(
         mps_model = ProbUnifMPS(input_dim, bond_dim, cmplx, parallel)
     else:
         mps_model = ProbMPS(seq_len, input_dim, bond_dim, cmplx, parallel)
-    mps_model = partial(mps_model, fast_eval=old_eval)
+    mps_model = partial(mps_model, slim_eval=(not old_eval))
 
     # Create fake input data
     if vec_input:
@@ -59,8 +59,8 @@ def prob_eval_runner(
 
 
 # Shorthand for old vs new evaluations
-old_eval_runner = partial(prob_eval_runner, fast_eval=True)
-new_eval_runner = partial(prob_eval_runner, fast_eval=False)
+old_eval_runner = partial(prob_eval_runner, old_eval=True)
+new_eval_runner = partial(prob_eval_runner, old_eval=False)
 
 
 @group_name("old_eval")

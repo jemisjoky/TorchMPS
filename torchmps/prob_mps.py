@@ -159,8 +159,13 @@ class ProbMPS(nn.Module):
         if self.embedding is not None:
             input_data = self.embedding.embed(input_data)
 
-        if slim_eval or parallel_eval:
-
+        if slim_eval:
+            if self.use_bias:
+                raise ValueError("Bias matrices not supported for slim_eval")
+            psi_vals, log_scales = slim_eval_fun(
+                input_data, self.core_tensors, self.edge_vecs
+            )
+        else:
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -170,11 +175,13 @@ class ProbMPS(nn.Module):
             mat_slices.transpose_(0, 1)
 
             #  Contract all bond dims to get (unnormalized) prob amplitudes
-            psi_vals = contract_matseq(
-                mat_slices, self.edge_vecs[0], self.edge_vecs[1], parallel_eval
+            psi_vals, log_scales = contract_matseq(
+                mat_slices,
+                self.edge_vecs[0],
+                self.edge_vecs[1],
+                parallel_eval,
+                log_format=True,
             )
-        else:
-            psi_vals = slim_eval_fun(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm()
@@ -182,7 +189,7 @@ class ProbMPS(nn.Module):
         assert torch.all(psi_vals.isfinite())
 
         # Compute unnormalized log probabilities and rescale factor
-        log_uprobs = torch.log(torch.abs(psi_vals))
+        log_uprobs = torch.log(torch.abs(psi_vals)) + log_scales
         self.rescale_factor = torch.exp(log_uprobs.mean() / len(input_data))
 
         # Return normalized probabilities
@@ -379,7 +386,13 @@ class ProbUnifMPS(ProbMPS):
         if self.embedding is not None:
             input_data = self.embedding.embed(input_data)
 
-        if not slim_eval or parallel_eval:
+        if slim_eval:
+            if self.use_bias:
+                raise ValueError("Bias matrices not supported for slim_eval")
+            psi_vals, log_scales = slim_eval_fun(
+                input_data, self.core_tensors, self.edge_vecs
+            )
+        else:
             # Contract inputs with core tensors and add bias matrices
             mat_slices = get_mat_slices(input_data, self.core_tensors)
             if self.use_bias:
@@ -389,11 +402,13 @@ class ProbUnifMPS(ProbMPS):
             mat_slices.transpose_(0, 1)
 
             #  Contract all bond dims to get (unnormalized) prob amplitudes
-            psi_vals = contract_matseq(
-                mat_slices, self.edge_vecs[0], self.edge_vecs[1], parallel_eval
+            psi_vals, log_scales = contract_matseq(
+                mat_slices,
+                self.edge_vecs[0],
+                self.edge_vecs[1],
+                parallel_eval,
+                log_format=True,
             )
-        else:
-            psi_vals = slim_eval_fun(input_data, self.core_tensors, self.edge_vecs)
 
         # Get log normalization and check for infinities
         log_norm = self.log_norm(len(input_data))
@@ -401,7 +416,7 @@ class ProbUnifMPS(ProbMPS):
         assert torch.all(psi_vals.isfinite())
 
         # Compute unnormalized log probabilities and rescale factor
-        log_uprobs = torch.log(torch.abs(psi_vals))
+        log_uprobs = torch.log(torch.abs(psi_vals)) + log_scales
         self.rescale_factor = torch.exp(log_uprobs.mean() / len(input_data))
 
         # Return normalized probabilities
