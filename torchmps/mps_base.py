@@ -23,7 +23,7 @@
 import warnings
 from math import prod, sqrt
 from itertools import repeat
-from typing import Union, Sequence, Optional
+from typing import Union, Sequence, Optional, Tuple
 
 import torch
 from torch import Tensor
@@ -67,6 +67,7 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
     # Check inputs, ensure they have correct shapes
     seq_len = len(seq_input)
     batch = seq_input.shape[1]
+    bond_dim = core_tensor.shape[-1]
     assert bound_vecs.ndim == 2
     assert seq_input.ndim in (2, 3)
     assert core_tensor.ndim in (3, 4)
@@ -94,15 +95,21 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
         slice_fun = lambda inps, core: core[inps]
 
     # Process input sequentially, from left to right
+    log_scales = torch.zeros(batch)
     vecs = bound_vecs[0][None, None]
     for inps, core in zip(seq_input, all_cores):
         mats = slice_fun(inps, core)
         vecs = torch.matmul(vecs, mats)
 
+        # Rescale vectors, update log_scales
+        rescale = vecs.abs().sum(dim=-1, keepdim=True) / bond_dim
+        log_scales += rescale.log()[:, 0, 0]
+        vecs /= rescale
+
     # Contract with the right boundary vector, return result
     contraction = torch.matmul(vecs.squeeze(dim=1), bound_vecs[1][:, None])
     assert contraction.shape == (batch, 1)
-    return contraction.squeeze(dim=1)
+    return contraction.squeeze(dim=1), log_scales
 
 
 def contract_matseq(
@@ -230,7 +237,7 @@ def contract_matseq(
             product.squeeze_(-1)
 
     # Remove dummy dimensions to make log_scale broadcastable with product
-    log_scale = log_scale[(...) + (0,) * num_vecs]
+    log_scale = log_scale[(...,) + (0,) * num_vecs]
 
     if log_format:
         return product, log_scale
@@ -256,17 +263,19 @@ def mat_reduce_par(matrices: Tensor) -> Tuple[Tensor, Tensor]:
     s_dim = -3  # Dimension which has spatial arrangement of matrices
     n_mats = matrices.shape[s_dim]
 
+    # Initialize the register for the log scale factors
+    log_scale = torch.zeros(matrices.shape[:-3])[..., None, None]
+
     # In case of empty collection of matrices, return the identity
     if n_mats == 0:
         eye = torch.eye(matrices.shape[-1], dtype=matrices.dtype)
         matrices, _ = batch_broadcast((eye, matrices), (2, 3))
-        return matrices
+        return matrices, log_scale
     elif n_mats == 1:
-        return matrices.squeeze(dim=s_dim)
+        return matrices.squeeze(dim=s_dim), log_scale
 
     # Iteratively multiply pairs of matrices until there is only one left
     assert matrices.shape[-2] == matrices.shape[-1]
-    log_scale = torch.zeros(matrices.shape[:-3])[..., None, None]
     bond_dim = matrices.shape[-1]
     while n_mats > 1:
         half_n = n_mats // 2
