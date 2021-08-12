@@ -21,6 +21,7 @@
 
 """Basic MPS functions used for uniform and non-uniform models"""
 import warnings
+from math import prod, sqrt
 from itertools import repeat
 from typing import Union, Sequence, Optional
 
@@ -59,6 +60,9 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
         contraction: Vector with shape `(batch,)` containing the elements
             of the MPS parameterized by `core_tensor` and `bound_vecs`,
             relative to the inputs in `seq_input`.
+        log_scale: Vector with shape `(batch,)` containing (the logarithms of)
+            positive-valued corrections to the scalar outputs in contraction,
+            so that the actual values are `contraction * exp(log_scale)`.
     """
     # Check inputs, ensure they have correct shapes
     seq_len = len(seq_input)
@@ -106,6 +110,7 @@ def contract_matseq(
     left_vec: Optional[Tensor] = None,
     right_vec: Optional[Tensor] = None,
     parallel_eval: bool = False,
+    log_format: bool = False,
 ) -> Tensor:
     r"""
     Matrix-multiply sequence of matrices with optional boundary vectors
@@ -123,7 +128,8 @@ def contract_matseq(
     When matrices or boundary vectors contain additional batch indices
     (assumed to be left-most indices), then batch matrix multiplication is
     carried out over all batch indices, which are broadcast together.
-    Shapes described below neglect these additional batch indices.
+    Shapes described below neglect these additional batch indices, which will
+    be possessed by all outputs whenever they are present in input `matrices`.
 
     Args:
         matrices: Single tensor of shape `(L, D, D)`, or sequence of
@@ -136,11 +142,19 @@ def contract_matseq(
         parallel_eval: Whether or not to force parallel evaluation in
             matrix contraction, which requires all input matrices to have
             same shape.
+            Default: ``False``
+        log_format: Whether or not to return the output as two objects, a
+            contraction output and a logarithm scale correction for each
+            product of matrices in the original input.
+            Default: ``False``
 
     Returns:
         contraction: Single scalar, vector, or matrix, equal to the
             sequential contraction of the input matrices with (resp.)
             two, one, or zero boundary vectors.
+        log_scale: Real scalar corrections to the magnitude of `contraction`,
+            so that the real output is `contraction * exp(log_scale)`. Only
+            present when log_format is True.
     """
     # Count number of boundary vectors
     bnd_vecs = [left_vec, right_vec]
@@ -180,7 +194,7 @@ def contract_matseq(
 
     if use_parallel:
         # Reduce product of all matrices in parallel
-        product = mat_reduce_par(matrices)
+        product, log_scale = mat_reduce_par(matrices)
 
         # Contract with boundary vectors, using intermediate dummy axes
         if real_vec[0]:
@@ -209,24 +223,34 @@ def contract_matseq(
             matrices.append(bnd_vecs[1][..., None])
 
         # Compute product sequentially and strip away dummy dimensions
-        product = mat_reduce_seq(matrices)
+        product, log_scale = mat_reduce_seq(matrices)
         if real_vec[0]:
             product.squeeze_(-2)
         if real_vec[1]:
             product.squeeze_(-1)
 
-    return product
+    # Remove dummy dimensions to make log_scale broadcastable with product
+    log_scale = log_scale[(...) + (0,) * num_vecs]
+
+    if log_format:
+        return product, log_scale
+    else:
+        return product * torch.exp(log_scale)
 
 
-def mat_reduce_par(matrices: Tensor) -> Tensor:
+def mat_reduce_par(matrices: Tensor) -> Tuple[Tensor, Tensor]:
     """
     Contract sequence of square matrices with parallel mat-mat multiplies
 
     Args:
-        matrices: Sequence of matrices to multiply.
+        matrices: Sequence of matrices to multiply, specified as a single
+            tensor with shape `(batch, bond_dim, bond_dim)`.
 
     Returns:
-        prod_mat: Product of input matrices
+        prod_mat: Product of input matrices.
+        log_scale: Vector with shape `(batch, 1, 1)` containing the logarithms
+            of positive-valued corrections to the matrices in `prod_mat`, so
+            that the actual values are `prod_mat * exp(log_scale)`.
     """
     assert matrices.ndim >= 3
     s_dim = -3  # Dimension which has spatial arrangement of matrices
@@ -242,6 +266,8 @@ def mat_reduce_par(matrices: Tensor) -> Tensor:
 
     # Iteratively multiply pairs of matrices until there is only one left
     assert matrices.shape[-2] == matrices.shape[-1]
+    log_scale = torch.zeros(matrices.shape[:-3])[..., None, None]
+    bond_dim = matrices.shape[-1]
     while n_mats > 1:
         half_n = n_mats // 2
         floor_n = half_n * 2
@@ -256,7 +282,12 @@ def mat_reduce_par(matrices: Tensor) -> Tensor:
         matrices = torch.cat((matrices, leftover), dim=s_dim)
         n_mats = matrices.shape[s_dim]
 
-    return matrices.squeeze(dim=s_dim)
+        # Rescale matrices and update log_scale
+        rescales = matrices.abs().sum(dim=(-2, -1), keepdim=True) / bond_dim
+        log_scale += rescales.log().sum(dim=-3)
+        matrices /= rescales
+
+    return matrices.squeeze(dim=s_dim), log_scale
 
 
 def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
@@ -267,7 +298,9 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
         matrices: Sequence of matrices to multiply.
 
     Returns:
-        prod_mat: Product of input matrices
+        prod_mat: Product of input matrices.
+        log_scale: Logarithms of positive-valued corrections to the matrices
+        in `prod_mat`, so that actual values are `prod_mat * exp(log_scale)`.
     """
     # Multiplication from left to right, so flip matrices if it's cheaper
     # to multiply from right to left
@@ -277,11 +310,19 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
 
     # Multiply all matrices sequentially, from left to right
     product, matrices = matrices[0], matrices[1:]
+    log_scale = torch.zeros(product.shape[:-2])[..., None, None]
     for mat in matrices:
         product = torch.matmul(product, mat)
 
+        # Rescale and update the log scale factor
+        av_norm = sqrt(prod(product.shape[-2:]))
+        rescale = product.abs().sum(dim=(-2, -1), keepdim=True) / av_norm
+        log_scale += torch.log(rescale)
+        product /= rescale
+
     # Revert to original form before returning
-    return product.transpose(-2, -1) if r2l else product
+    product = product.transpose(-2, -1) if r2l else product
+    return product, log_scale
 
 
 def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
