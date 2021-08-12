@@ -21,7 +21,6 @@
 
 """Basic MPS functions used for uniform and non-uniform models"""
 import warnings
-from math import prod, sqrt
 from itertools import repeat
 from typing import Union, Sequence, Optional, Tuple
 
@@ -324,7 +323,7 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
         product = torch.matmul(product, mat)
 
         # Rescale and update the log scale factor
-        av_norm = sqrt(prod(product.shape[-2:]))
+        av_norm = torch.tensor(product.shape[-2:]).prod().sqrt()
         rescale = product.abs().sum(dim=(-2, -1), keepdim=True) / av_norm
         log_scale = log_scale + torch.log(rescale)
         product = product / rescale
