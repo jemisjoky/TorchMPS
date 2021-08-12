@@ -34,6 +34,7 @@ from torchmps.mps_base import (
     slim_eval_fun,
 )
 from torchmps.utils2 import batch_broadcast, batch_to
+from torchmps.tests.utils_for_tests import allcloseish
 
 bool_st = st.booleans
 seq_len_st = partial(st.integers, 1, 1000)
@@ -178,7 +179,8 @@ def test_composite_init_mat_slice_contraction(
     ref_vec = torch.randn(bond_dim).to(core_tensor.dtype)
     ref_vals = ref_vec.norm() ** 2
     bound_vecs = torch.stack((ref_vec, ref_vec))
-    prod_vals = slim_eval_fun(fake_data, core_tensor, bound_vecs)
+    prod_vals, log_scales = slim_eval_fun(fake_data, core_tensor, bound_vecs)
+    prod_vals *= log_scales.exp()
     assert torch.allclose(prod_vals.abs(), ref_vals, atol=1e-4, rtol=1e-4)
 
 
@@ -201,8 +203,6 @@ def test_contract_matseq_identity_batches(
     empty_case = seq_len == 0 and not (use_lvec or use_rvec)
 
     # Generate identity matrices and boundary vectors
-    # eye = torch.eye(bond_dim)
-    # eye_mats = batch_to(eye, tuple(batch_shape) + (seq_len,), 2)
     shape = tuple(batch_shape) + (seq_len, bond_dim, bond_dim)
     eye_mats = near_eye_init(shape, noise=0)
     eye_mats2 = [eye_mats[..., i, :, :] for i in range(seq_len)]
@@ -276,3 +276,36 @@ def test_contract_matseq_empty(parallel_eval):
     """Verify that no boundary vectors and empty sequence raises error"""
     with pytest.raises(ValueError):
         contract_matseq((), None, None, parallel_eval)
+
+
+@settings(deadline=None)
+@given(st.integers(1, 5000), st.booleans())
+def test_contract_functions_stable(seq_len, parallel_eval):
+    """
+    Ensure that the product of long sequence of rank-1 matrices gives the right
+    log value
+    """
+    # Get the matrix to be multiplied and the correct scale of all matrices
+    bound_vecs = torch.randn(2, 2).abs()
+    rvec, lvec = bound_vecs
+    mat = lvec[:, None] @ rvec[None]
+    log_scalar = mat.trace().log()
+    correct_log_val = seq_len * log_scalar
+    matrices = torch.stack((mat,) * seq_len)
+
+    # Compute the product of the matrices in several ways
+    prod_mat1, log_scale1 = contract_matseq(
+        matrices, parallel_eval=parallel_eval, log_format=True
+    )
+    log_val1 = log_scale1[0, 0] + prod_mat1.trace().log()
+    prod_val2, log_scale2 = contract_matseq(
+        matrices, rvec, lvec, parallel_eval=parallel_eval, log_format=True
+    )
+    log_val2 = log_scale2 + prod_val2.log()
+    fake_input, fake_core = torch.zeros(seq_len, 1), mat[None]
+    prod_val3, log_scale3 = slim_eval_fun(fake_input.long(), fake_core, bound_vecs)
+    log_val3 = log_scale3 + prod_val3.log()
+
+    assert allcloseish(log_val1, correct_log_val)
+    assert allcloseish(log_val2, correct_log_val + log_scalar)
+    assert allcloseish(log_val3, correct_log_val + log_scalar)
