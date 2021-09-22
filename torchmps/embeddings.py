@@ -20,7 +20,9 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Uniform and non-uniform probabilistic MPS classes"""
-from typing import Union, Optional, Callable  # , Sequence
+from math import sqrt, pi
+from functools import partial
+from typing import Union, Optional, Callable
 
 import torch
 
@@ -136,11 +138,47 @@ class FixedEmbedding:
         return self.emb_fun(input_data)
 
 
+unit_interval = DataDomain(continuous=True, max_val=1, min_val=0)
+
+
 def onehot_embed(tensor, emb_dim):
     """
-    Function giving trivial one-hot embedding
+    Function giving trivial one-hot embedding of categorical data
     """
     shape = tensor.shape + (emb_dim,)
     output = torch.zeros(*shape)
     output.scatter_(-1, tensor[..., None], 1)
     return output
+
+
+def trig_embed(data, emb_dim=2):
+    r"""
+    Function giving embedding from powers of sine and cosine
+
+    Based on Equation B4 of E.M. Stoudenmire and D.J. Schwab, "Supervised
+    Learning With Quantum-Inspired Tensor Networks", NIPS 2016, which maps an
+    input x in the unit interval to a d-dim vector whose j'th component
+    (where j = 0, 1, ..., d-1) is:
+
+    .. math::
+        \phi(x)_j = \sqrt{d-1 \choose j} \cos(\frac{pi}{2}x)^{d-j-1}
+        \sin(\frac{pi}{2}x)^{j}
+
+    Written by Raphaëlle Tihon
+    """
+    from scipy.special import binom
+
+    emb_data = []
+    for s in range(emb_dim):
+        comp = (
+            torch.cos(data * pi / 2) ** (emb_dim - s - 1)
+            * torch.sin(data * pi / 2) ** s
+        )
+        comp *= sqrt(binom(emb_dim - 1, s))
+        emb_data.append(comp)
+    emb_data = torch.stack(emb_data, dim=-1)
+    assert emb_data.shape == data.shape + (emb_dim,)
+    return emb_data
+
+
+sincos_embed = partial(trig_embed, emb_dim=2)
