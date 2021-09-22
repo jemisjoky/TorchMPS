@@ -36,7 +36,7 @@ def test_data_domain(continuous, max_val, length):
     min_val = max_val - length
     if not continuous:
         max_val = abs(int(max_val)) + 1
-    data_domain = DataDomain(continuous, max_val, min_val)
+    data_domain = DataDomain(continuous=continuous, max_val=max_val, min_val=min_val)
 
     assert data_domain.continuous == continuous
     assert data_domain.max_val == max_val
@@ -51,7 +51,7 @@ def test_onehot_embedding(emb_dim):
     """
     Verify that FixedEmbedding works as expected when given one-hot embedding
     """
-    data_domain = DataDomain(False, emb_dim)
+    data_domain = DataDomain(continuous=False, max_val=emb_dim)
     fixed_embed = FixedEmbedding(partial(onehot_embed, emb_dim=emb_dim), data_domain)
     assert torch.allclose(fixed_embed.lamb_mat, torch.ones(()))
 

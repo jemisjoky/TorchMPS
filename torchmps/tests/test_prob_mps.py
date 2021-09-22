@@ -60,9 +60,9 @@ def init_model_and_data(
     # Account for case when we want an embedding
     if embed_fun is not None:
         if continuous:
-            domain = DataDomain(True, 1, 0)
+            domain = DataDomain(continuous=True, max_val=1, min_val=0)
         else:
-            domain = DataDomain(False, input_dim)
+            domain = DataDomain(continuous=False, max_val=input_dim)
     else:
         domain = None
 

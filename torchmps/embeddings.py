@@ -87,14 +87,14 @@ class FixedEmbedding:
         self.num_points = None
         self.special_case = None
 
-    def make_lambda(self, num_points: int = 100):
+    def make_lambda(self, num_points: int = 1000):
         """
         Compute the lambda matrix used for normalization
         """
         # Compute the raw lambda matrix, computing number of points if needed
         if self.domain.continuous:
             points = torch.linspace(
-                self.domain.min_val, self.domain.min_val, steps=num_points
+                self.domain.min_val, self.domain.max_val, steps=num_points
             )
             self.num_points = num_points
             emb_vecs = self.emb_fun(points)
