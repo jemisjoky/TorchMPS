@@ -121,14 +121,14 @@ def test_get_mat_slices_shape(
     assert core_tensor.is_complex() == is_complex
 
     if vec_input:
-        fake_data = torch.randn(seq_len, batch, input_dim).abs()
+        fake_data = torch.randn(batch, seq_len, input_dim).abs()
         fake_data /= fake_data.sum(dim=2, keepdim=True)
     else:
-        fake_data = torch.randint(input_dim, (seq_len, batch))
+        fake_data = torch.randint(input_dim, (batch, seq_len))
 
     # Run get_mat_slices and verify that the output has expected shape
     output = get_mat_slices(fake_data, core_tensor)
-    assert output.shape == (seq_len, batch, bond_dim, bond_dim)
+    assert output.shape == (batch, seq_len, bond_dim, bond_dim)
 
 
 @settings(deadline=None)
@@ -162,18 +162,19 @@ def test_composite_init_mat_slice_contraction(
     assert core_tensor.is_complex() == is_complex
 
     if vec_input:
-        fake_data = torch.randn(seq_len, batch, input_dim).abs()
+        fake_data = torch.randn(batch, seq_len, input_dim).abs()
         fake_data /= fake_data.sum(dim=2, keepdim=True)
     else:
-        fake_data = torch.randint(input_dim, (seq_len, batch))
+        fake_data = torch.randint(input_dim, (batch, seq_len))
 
     # Get matrix slices, then contract them all together
     mat_slices = get_mat_slices(fake_data, core_tensor)
+
     prod_mats = contract_matseq(mat_slices)
 
     # Verify that all contracted matrix slices are identities
     target_prods = torch.eye(bond_dim)
-    assert torch.allclose(prod_mats.abs(), target_prods)
+    assert torch.allclose(prod_mats.abs(), target_prods, atol=1e-4, rtol=1e-4)
 
     # Do the same thing for slim_eval_fun, but with boundary vectors
     ref_vec = torch.randn(bond_dim).to(core_tensor.dtype)
@@ -188,7 +189,7 @@ def test_composite_init_mat_slice_contraction(
 @given(
     batch_shape_st(4),
     bond_dim_st(),
-    st.integers(0, 10),
+    st.integers(1, 10),
     bool_st(),
     bool_st(),
     bool_st(),
@@ -199,9 +200,6 @@ def test_contract_matseq_identity_batches(
     """
     Multipy random multiples of the identity matrix w/ variable batch size
     """
-    # Case of empty matrices and no boundary vectors is special
-    empty_case = seq_len == 0 and not (use_lvec or use_rvec)
-
     # Generate identity matrices and boundary vectors
     shape = tuple(batch_shape) + (seq_len, bond_dim, bond_dim)
     eye_mats = near_eye_init(shape, noise=0)
@@ -213,18 +211,10 @@ def test_contract_matseq_identity_batches(
     # Contract with the naive algorithm, compare to contract_matseq output
     naive_result = naive_contraction(eye_mats, lvec, rvec)
     lib_result = contract_matseq(eye_mats, lvec, rvec, parallel_eval)
+    lib_result2 = contract_matseq(eye_mats2, lvec, rvec, parallel_eval)
 
-    # Can't call contract_matseq with empty list, no boundary vectors
-    if empty_case:
-        lib_result2 = lib_result
-    else:
-        lib_result2 = contract_matseq(eye_mats2, lvec, rvec, parallel_eval)
-
-    # Both ways of calling contract_matseq should agree,
-    # except for empty matrix sequences
-    if not torch.equal(lib_result, lib_result2):
-        assert seq_len == 0
-        assert lib_result.ndim > lib_result2.ndim
+    # Both ways of calling contract_matseq should agree
+    assert torch.equal(lib_result, lib_result2)
     assert torch.allclose(lib_result, naive_result)
 
 
@@ -302,7 +292,7 @@ def test_contract_functions_stable(seq_len, parallel_eval):
         matrices, rvec, lvec, parallel_eval=parallel_eval, log_format=True
     )
     log_val2 = log_scale2 + prod_val2.log()
-    fake_input, fake_core = torch.zeros(seq_len, 1), mat[None]
+    fake_input, fake_core = torch.zeros(1, seq_len), mat[None]
     prod_val3, log_scale3 = slim_eval_fun(fake_input.long(), fake_core, bound_vecs)
     log_val3 = log_scale3 + prod_val3.log()
 

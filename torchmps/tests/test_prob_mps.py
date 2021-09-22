@@ -52,6 +52,7 @@ def init_model_and_data(
     use_bias,
     vec_input,
     big_batch,
+    normal_init=False,
     embed_fun=None,
     continuous=None,
 ):
@@ -65,13 +66,17 @@ def init_model_and_data(
     else:
         domain = None
 
+    # Initialization method
+    init_method = "normal" if normal_init else "near_eye"
+
     if model == "fixed-len":
         prob_mps = ProbMPS(
             seq_len,
             input_dim,
             bond_dim,
-            complex_params,
-            use_bias,
+            complex_params=complex_params,
+            use_bias=use_bias,
+            init_method=init_method,
             embed_fun=embed_fun,
             domain=domain,
         )
@@ -79,26 +84,39 @@ def init_model_and_data(
         prob_mps = ProbUnifMPS(
             input_dim,
             bond_dim,
-            complex_params,
-            use_bias,
+            complex_params=complex_params,
+            use_bias=use_bias,
+            init_method=init_method,
             embed_fun=embed_fun,
             domain=domain,
         )
 
     batch_dim = 25 if big_batch else 1
     if vec_input:
-        fake_data = torch.randn(seq_len, batch_dim, input_dim).abs()
+        fake_data = torch.randn(batch_dim, seq_len, input_dim).abs()
         fake_data /= fake_data.sum(dim=2, keepdim=True)
     else:
-        fake_data = torch.randint(input_dim, (seq_len, batch_dim))
+        fake_data = torch.randint(input_dim, (batch_dim, seq_len))
 
     return prob_mps, fake_data
 
 
-def default_model_data(model, embed_fun=None, continuous=None):
+def default_model_data(
+    model, complex_params=True, normal_init=True, embed_fun=None, continuous=None
+):
     """Default values for model and data"""
     return init_model_and_data(
-        model, 14, 4, 5, True, False, False, True, embed_fun, continuous
+        model,
+        seq_len=14,
+        input_dim=4,
+        bond_dim=5,
+        complex_params=True,
+        use_bias=False,
+        vec_input=False,
+        big_batch=True,
+        normal_init=True,
+        embed_fun=embed_fun,
+        continuous=continuous,
     )
 
 
@@ -118,6 +136,7 @@ def rescale_embed(input, dim=4):
     bool_st(),
     bool_st(),
     bool_st(),
+    bool_st(),
 )
 def test_model_forward(
     model,
@@ -129,6 +148,7 @@ def test_model_forward(
     use_bias,
     vec_input,
     big_batch,
+    normal_init,
 ):
     """
     Verify that model forward function runs and gives reasonable output
@@ -143,6 +163,7 @@ def test_model_forward(
         use_bias,
         vec_input,
         big_batch,
+        normal_init=normal_init,
     )
     batch_dim = 25 if big_batch else 1
 
@@ -152,19 +173,28 @@ def test_model_forward(
     assert torch.all(log_probs.isfinite())
     assert log_probs.is_floating_point()
     if not torch.all(log_probs <= 0):
+        # For sequences with only one value, probability should be 1
         assert input_dim == 1
+        assert torch.allclose(log_probs, 0.0)
 
     # Check that the old method of evaluation gives identical results
     # Note that the model doesn't support bias matrices with slim_eval
     if not use_bias:
         old_log_probs = prob_mps(fake_data, slim_eval=True)
-        assert torch.allclose(log_probs, old_log_probs)
+        assert allcloseish(log_probs, old_log_probs)
 
 
 @parametrize_models()
-# @settings(deadline=None)
+@settings(deadline=None, max_examples=1000)
 @given(
-    input_dim_st(), bond_dim_st(), bool_st(), bool_st(), bool_st(), bool_st(), bool_st()
+    input_dim_st(),
+    bond_dim_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
+    bool_st(),
 )
 def test_valid_binary_probs(
     model,
@@ -175,6 +205,7 @@ def test_valid_binary_probs(
     parallel_eval,
     use_bias,
     use_embed,
+    normal_init,
 ):
     """
     Verify that for binary distributions, all probabilities sum up to 1
@@ -184,7 +215,7 @@ def test_valid_binary_probs(
         return
 
     # Initialize dataset and model
-    all_seqs = complete_binary_dataset(seq_len).T
+    all_seqs = complete_binary_dataset(seq_len)
     prob_mps, _ = init_model_and_data(
         model,
         seq_len,
@@ -194,15 +225,14 @@ def test_valid_binary_probs(
         use_bias,
         False,
         False,
-        (partial(rescale_embed, dim=2) if use_embed else None),
-        False,
+        normal_init=normal_init,
+        embed_fun=(partial(rescale_embed, dim=2) if use_embed else None),
+        continuous=False,
     )
 
-    # Get model probabilities and verify they are close to 1
-    probs = torch.exp(
-        prob_mps(all_seqs, slim_eval=slim_eval, parallel_eval=parallel_eval)
-    )
-    assert allcloseish(probs.sum(), 1.0, tol=5e-3)
+    # Get model probabilities and verify they are close to 1 (in log space)
+    log_probs = prob_mps(all_seqs, slim_eval=slim_eval, parallel_eval=parallel_eval)
+    assert allcloseish(log_probs.logsumexp(dim=0), 0.0)
 
 
 @parametrize_models()
@@ -277,11 +307,25 @@ def test_model_backward(
 
 
 @parametrize_models()
-def test_trivial_embedding(model):
+@given(st.booleans(), st.booleans())
+def test_trivial_embedding(model, complex_params, normal_init):
     """
     Ensure an embedding that rescales by a constant gives same probabilities
     """
-    normal_mps, fake_data = default_model_data(model)
-    embed_mps, _ = default_model_data(model, rescale_embed, False)
+    # Define two models with same parameters, but using embedding for latter
+    normal_mps, fake_data = default_model_data(
+        model, complex_params=complex_params, normal_init=normal_init
+    )
+    embed_mps, _ = default_model_data(
+        model,
+        complex_params=complex_params,
+        normal_init=normal_init,
+        embed_fun=rescale_embed,
+        continuous=False,
+    )
+    embed_mps.load_state_dict(normal_mps.state_dict())
 
-    assert allcloseish(normal_mps(fake_data), embed_mps(fake_data), tol=0.05)
+    normal_output = normal_mps(fake_data)
+    embed_output = embed_mps(fake_data)
+
+    assert torch.allclose(normal_output, embed_output)

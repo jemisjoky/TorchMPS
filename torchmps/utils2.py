@@ -183,7 +183,7 @@ def realify(tensor: Tensor) -> Tensor:
     Input must be approximately real, `realify` will raise error if not
     """
     if tensor.is_complex():
-        assert torch.allclose(tensor.imag, torch.zeros(()), atol=1e-4), breakpoint()
+        assert torch.allclose(tensor.imag, torch.zeros(()), atol=1e-4)
         return tensor.real
     else:
         return tensor

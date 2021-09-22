@@ -29,11 +29,12 @@ from torch import Tensor, nn
 from torchmps.mps_base import (
     contract_matseq,
     near_eye_init,
+    normal_init,
     get_mat_slices,
     get_log_norm,
     slim_eval_fun,
 )
-from torchmps.utils2 import phaseify, floor2
+from torchmps.utils2 import phaseify
 from torchmps.embeddings import DataDomain, FixedEmbedding
 
 
@@ -78,6 +79,10 @@ class ProbMPS(nn.Module):
             Default: ``False``
         use_bias: Whether to use a trainable bias matrix in evaluation.
             Default: ``False``
+        init_method: String specifying how to initialize the MPS core tensors.
+            Giving "near_eye" initializes all core slices to near the identity,
+            while "normal" has all core elements be normally distributed.
+            Default: ``"near_eye"``
         embed_fun: Function which embeds discrete or continous scalar values
             into vectors of dimension `input_dim`. Must be able to take in a
             tensor of any order `n` and output a tensor of order `n+1`, where
@@ -97,6 +102,7 @@ class ProbMPS(nn.Module):
         bond_dim: int,
         complex_params: bool = False,
         use_bias: bool = False,
+        init_method: str = "near_eye",
         embed_fun: Optional[Callable] = None,
         domain: Optional[DataDomain] = None,
     ) -> None:
@@ -104,10 +110,15 @@ class ProbMPS(nn.Module):
         assert min(seq_len, input_dim, bond_dim) > 0
 
         # Initialize core tensor and edge vectors
-        core_tensors = near_eye_init(
-            (seq_len, input_dim, bond_dim, bond_dim), complex_params
+        assert init_method in ("near_eye", "normal")
+        init_fun = near_eye_init if init_method == "near_eye" else normal_init
+        core_tensors = init_fun(
+            (seq_len, input_dim, bond_dim, bond_dim), is_complex=complex_params
         )
-        edge_vecs = torch.randn(2, bond_dim) / sqrt(bond_dim)
+        # Left and right vectors initialized to be identical, since it avoids
+        # issues with exponentially small overlap
+        rand_vec = torch.randn(bond_dim) / sqrt(bond_dim)
+        edge_vecs = torch.stack((rand_vec,) * 2)
         if complex_params:
             edge_vecs = phaseify(edge_vecs)
         self.core_tensors = nn.Parameter(core_tensors)
@@ -122,7 +133,6 @@ class ProbMPS(nn.Module):
 
         # Set other MPS attributes
         self.complex_params = complex_params
-        self.rescale_factor = None  # Hacky way of stabilizing evaluation
         self.embedding = None
 
         # Set up embedding object if desired
@@ -138,8 +148,8 @@ class ProbMPS(nn.Module):
         Get the log probabilities of batch of input data
 
         Args:
-            input_data: Sequential with shape `(seq_len, batch)`, for
-                discrete inputs, or shape `(seq_len, batch, input_dim)`,
+            input_data: Sequential with shape `(batch, seq_len)`, for
+                discrete inputs, or shape `(batch, seq_len, input_dim)`,
                 for vector inputs.
             slim_eval: Whether to use a less memory intensive MPS
                 evaluation function, useful for larger inputs.
@@ -171,9 +181,6 @@ class ProbMPS(nn.Module):
             if self.use_bias:
                 mat_slices = mat_slices + self.bias_mat[None, None]
 
-            # Put the batch axis, since contract_matseq expects that
-            mat_slices.transpose_(0, 1)
-
             #  Contract all bond dims to get (unnormalized) prob amplitudes
             psi_vals, log_scales = contract_matseq(
                 mat_slices,
@@ -188,9 +195,8 @@ class ProbMPS(nn.Module):
         assert log_norm.isfinite()
         assert torch.all(psi_vals.isfinite())
 
-        # Compute unnormalized log probabilities and rescale factor
+        # Compute unnormalized log probabilities
         log_uprobs = torch.log(torch.abs(psi_vals)) + log_scales
-        self.rescale_factor = torch.exp(log_uprobs.mean() / len(input_data))
 
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm
@@ -217,16 +223,6 @@ class ProbMPS(nn.Module):
             loss_val: Scalar value giving average of the negative log
                 likelihood loss of all sequences in input batch.
         """
-        # Rescale the core tensors and boundary vectors
-        if self.rescale_factor is not None:
-            state_dict = self.state_dict()
-            vec_rescale = floor2(self.edge_vecs.norm(dim=1, keepdim=True))
-            new_edgevecs = self.edge_vecs / vec_rescale
-            new_coretensors = self.core_tensors / self.rescale_factor
-            state_dict["edge_vecs"] = new_edgevecs
-            state_dict["core_tensors"] = new_coretensors
-            self.load_state_dict(state_dict)
-
         return -torch.mean(
             self.forward(input_data, slim_eval=slim_eval, parallel_eval=parallel_eval)
         )
@@ -308,6 +304,10 @@ class ProbUnifMPS(ProbMPS):
             Default: ``False``
         use_bias: Whether to use a trainable bias matrix in evaluation.
             Default: ``False``
+        init_method: String specifying how to initialize the MPS core tensors.
+            Giving "near_eye" initializes all core slices to near the identity,
+            while "normal" has all core elements be normally distributed.
+            Default: ``"near_eye"``
         embed_fun: Function which embeds discrete or continous scalar values
             into vectors of dimension `input_dim`. Must be able to take in a
             tensor of any order `n` and output a tensor of order `n+1`, where
@@ -326,6 +326,7 @@ class ProbUnifMPS(ProbMPS):
         bond_dim: int,
         complex_params: bool = False,
         use_bias: bool = False,
+        init_method: str = "near_eye",
         embed_fun: Optional[Callable] = None,
         domain: Optional[DataDomain] = None,
     ) -> None:
@@ -333,8 +334,15 @@ class ProbUnifMPS(ProbMPS):
         assert min(input_dim, bond_dim) > 0
 
         # Initialize core tensor and edge vectors
-        core_tensors = near_eye_init((input_dim, bond_dim, bond_dim), complex_params)
-        edge_vecs = torch.randn(2, bond_dim) / sqrt(bond_dim)
+        assert init_method in ("near_eye", "normal")
+        init_fun = near_eye_init if init_method == "near_eye" else normal_init
+        core_tensors = init_fun(
+            (input_dim, bond_dim, bond_dim), is_complex=complex_params
+        )
+        # Left and right vectors initialized to be identical, since it avoids
+        # issues with exponentially small overlap
+        rand_vec = torch.randn(bond_dim) / sqrt(bond_dim)
+        edge_vecs = torch.stack((rand_vec, rand_vec.conj()))
         if complex_params:
             edge_vecs = phaseify(edge_vecs)
         self.core_tensors = nn.Parameter(core_tensors)
@@ -349,7 +357,6 @@ class ProbUnifMPS(ProbMPS):
 
         # Set other MPS attributes
         self.complex_params = complex_params
-        self.rescale_factor = None
         self.embedding = None
 
         # Set up embedding object if desired
@@ -365,8 +372,8 @@ class ProbUnifMPS(ProbMPS):
         Get the log probabilities of batch of input data
 
         Args:
-            input_data: Sequential with shape `(seq_len, batch)`, for
-                discrete inputs, or shape `(seq_len, batch, input_dim)`,
+            input_data: Sequential with shape `(batch, seq_len)`, for
+                discrete inputs, or shape `(batch, seq_len, input_dim)`,
                 for vector inputs.
             slim_eval: Whether to use a less memory intensive MPS
                 evaluation function, useful for larger inputs.
@@ -380,7 +387,7 @@ class ProbUnifMPS(ProbMPS):
             log_probs: Vector with shape `(batch,)` giving the natural
                 logarithm of the probability of each input sequence.
         """
-        # TODO: Convert input to STensors first
+        batch, seq_len = input_data.shape[:2]
 
         # Apply embedding function if it is defined
         if self.embedding is not None:
@@ -398,9 +405,6 @@ class ProbUnifMPS(ProbMPS):
             if self.use_bias:
                 mat_slices = mat_slices + self.bias_mat[None]
 
-            # Put the batch axis, since contract_matseq expects that
-            mat_slices.transpose_(0, 1)
-
             #  Contract all bond dims to get (unnormalized) prob amplitudes
             psi_vals, log_scales = contract_matseq(
                 mat_slices,
@@ -411,13 +415,13 @@ class ProbUnifMPS(ProbMPS):
             )
 
         # Get log normalization and check for infinities
-        log_norm = self.log_norm(len(input_data))
+        log_norm = self.log_norm(seq_len)
         assert log_norm.isfinite()
         assert torch.all(psi_vals.isfinite())
 
-        # Compute unnormalized log probabilities and rescale factor
+        # Compute unnormalized log probabilities
         log_uprobs = torch.log(torch.abs(psi_vals)) + log_scales
-        self.rescale_factor = torch.exp(log_uprobs.mean() / len(input_data))
+        assert log_uprobs.shape == (batch,)
 
         # Return normalized probabilities
         return 2 * log_uprobs - log_norm

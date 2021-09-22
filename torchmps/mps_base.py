@@ -21,6 +21,7 @@
 
 """Basic MPS functions used for uniform and non-uniform models"""
 import warnings
+from math import sqrt
 from itertools import repeat
 from typing import Union, Sequence, Optional, Tuple
 
@@ -46,8 +47,8 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
     Evaluate MPS tensor elements relative to a batch of sequential inputs.
 
     Args:
-        seq_input: Tensor with shape `(seq_len, batch)` for discrete input
-            sequences, or `(seq_len, batch, input_dim)` for vector input
+        seq_input: Tensor with shape `(batch, seq_len)` for discrete input
+            sequences, or `(batch, seq_len, input_dim)` for vector input
             sequences.
         core_tensor: Tensor with shape `(input_dim, bond_dim, bond_dim)`
             for uniform MPS or `(seq_len, input_dim, bond_dim, bond_dim)`
@@ -63,6 +64,9 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
             positive-valued corrections to the scalar outputs in contraction,
             so that the actual values are `contraction * exp(log_scale)`.
     """
+    # Following algo assumes batch and sequence indices are flipped
+    seq_input = seq_input.transpose(0, 1)
+
     # Check inputs, ensure they have correct shapes
     seq_len = len(seq_input)
     batch = seq_input.shape[1]
@@ -94,21 +98,21 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
         slice_fun = lambda inps, core: core[inps]
 
     # Process input sequentially, from left to right
-    log_scales = torch.zeros(batch)
+    log_scale = torch.zeros(batch)
     vecs = bound_vecs[0][None, None]
     for inps, core in zip(seq_input, all_cores):
         mats = slice_fun(inps, core)
         vecs = torch.matmul(vecs, mats)
 
-        # Rescale vectors, update log_scales
+        # Rescale vectors, update log_scale
         rescale = vecs.abs().sum(dim=-1, keepdim=True) / bond_dim
-        log_scales = log_scales + rescale.log()[:, 0, 0]
+        log_scale = log_scale + rescale.log()[:, 0, 0]
         vecs = vecs / rescale
 
     # Contract with the right boundary vector, return result
     contraction = torch.matmul(vecs.squeeze(dim=1), bound_vecs[1][:, None])
     assert contraction.shape == (batch, 1)
-    return contraction.squeeze(dim=1), log_scales
+    return contraction.squeeze(dim=1), log_scale
 
 
 def contract_matseq(
@@ -207,10 +211,6 @@ def contract_matseq(
             product = torch.matmul(bnd_vecs[0][..., None, :], product)
         if real_vec[1]:
             product = torch.matmul(product, bnd_vecs[1][..., None])
-        if real_vec[0]:
-            product.squeeze_(-2)
-        if real_vec[1]:
-            product.squeeze_(-1)
 
     else:
         if num_vecs == 0 and len(matrices) == 0:
@@ -230,13 +230,14 @@ def contract_matseq(
 
         # Compute product sequentially and strip away dummy dimensions
         product, log_scale = mat_reduce_seq(matrices)
-        if real_vec[0]:
-            product.squeeze_(-2)
-        if real_vec[1]:
-            product.squeeze_(-1)
 
-    # Remove dummy dimensions to make log_scale broadcastable with product
-    log_scale = log_scale[(...,) + (0,) * num_vecs]
+    # Strip away dummy indices
+    if real_vec[0]:
+        product.squeeze_(-2)
+        log_scale.squeeze_(-2)
+    if real_vec[1]:
+        product.squeeze_(-1)
+        log_scale.squeeze_(-1)
 
     if log_format:
         return product, log_scale
@@ -250,7 +251,7 @@ def mat_reduce_par(matrices: Tensor) -> Tuple[Tensor, Tensor]:
 
     Args:
         matrices: Sequence of matrices to multiply, specified as a single
-            tensor with shape `(batch, bond_dim, bond_dim)`.
+            tensor with shape `(batch, seq_len, bond_dim, bond_dim)`.
 
     Returns:
         prod_mat: Product of input matrices.
@@ -323,8 +324,8 @@ def mat_reduce_seq(matrices: Sequence[Tensor]) -> Tensor:
         product = torch.matmul(product, mat)
 
         # Rescale and update the log scale factor
-        av_norm = torch.tensor(product.shape[-2:]).prod().sqrt()
-        rescale = product.abs().sum(dim=(-2, -1), keepdim=True) / av_norm
+        target_norm = sqrt(product.shape[-2] * product.shape[-1])
+        rescale = product.abs().sum(dim=(-2, -1), keepdim=True) / target_norm
         log_scale = log_scale + torch.log(rescale)
         product = product / rescale
 
@@ -338,15 +339,15 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
     Use sequential input and core tensor to get sequence of matrix slices
 
     Args:
-        seq_input: Tensor with shape `(seq_len, batch)` for discrete input
-            sequences, or `(seq_len, batch, input_dim)` for vector input
+        seq_input: Tensor with shape `(batch, seq_len)` for discrete input
+            sequences, or `(batch, seq_len, input_dim)` for vector input
             sequences.
         core_tensor: Tensor with shape `(input_dim, bond_dim, bond_dim)`
             for uniform MPS or `(seq_len, input_dim, bond_dim, bond_dim)`
             for fixed-length MPS.
 
     Returns:
-        mat_slices: Tensor with shape `(seq_len, batch, bond_dim, bond_dim)`,
+        mat_slices: Tensor with shape `(batch, seq_len, bond_dim, bond_dim)`,
             containing all transition matrix core slices of `core_tensor`
             relative to data in `seq_input`.
     """
@@ -356,7 +357,7 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
     indexing = seq_input.ndim == 2
     uniform = core_tensor.ndim == 3
     input_dim, bond_dim = core_tensor.shape[-3:-1]
-    seq_len = len(seq_input)
+    seq_len = seq_input.shape[1]
 
     # TODO: Deal with packing if/when we have variable-len sequences,
     #       likely using pad_mat_slices function
@@ -370,12 +371,12 @@ def get_mat_slices(seq_input: Tensor, core_tensor: Tensor) -> Tensor:
         mat_slices = core_tensor[seq_input]
     elif indexing and not uniform:
         # Indexing equivalent of the einsum operation at bottom
-        mat_slices = CIndex(core_tensor)[torch.arange(seq_len)[:, None], seq_input]
-        # mat_slices = core_tensor[torch.arange(seq_len)[:, None], seq_input]
+        mat_slices = CIndex(core_tensor)[torch.arange(seq_len)[None], seq_input]
+        # mat_slices = core_tensor[torch.arange(seq_len)[None], seq_input]
     elif not indexing and uniform:
-        mat_slices = einsum("tbi,ide->tbde", seq_input, core_tensor)
+        mat_slices = einsum("bti,ide->btde", seq_input, core_tensor)
     elif not indexing and not uniform:
-        mat_slices = einsum("tbi,tide->tbde", seq_input, core_tensor)
+        mat_slices = einsum("bti,tide->btde", seq_input, core_tensor)
 
     return mat_slices
 
@@ -431,7 +432,7 @@ def get_log_norm(
     left_vec, r_vec = boundary_vecs
     dens_mat = left_vec[:, None] @ left_vec[None, :].conj()
     log_norm = torch.zeros(())
-    if uniform:
+    if uniform and fixed_len:
         core_tensor = (core_tensor,) * length
 
     # Define transfer operator function for different types of lambda matrix
@@ -515,7 +516,44 @@ def near_eye_init(
     # Initialize core using size-adjusted value of noise
     eye_core = batch_to(torch.eye(*shape[-2:]), shape[:-2], 2)
     noise = noise / torch.sqrt(torch.prod(torch.tensor(shape[-2:])).float())
-    delta = noise * torch.randn(*shape)
+    delta = noise * torch.randn(shape)
     if is_complex:
         delta = phaseify(delta)
     return eye_core + delta
+
+
+def normal_init(shape: tuple, is_complex: bool = False, rel_std: float = 1.0) -> Tensor:
+    """
+    Initialize an MPS core tensor with all slices normally distributed
+
+    Args:
+        shape: Shape of the core tensor being initialized.
+        is_complex: Whether to initialize a complex core tensor.
+            Default: False
+        rel_std: Relative standard deviation of entries of matrix slices,
+            scaled by a factor of the bond dimension of the MPS.
+            Default: 1.0
+
+    Returns:
+        core_tensor: Normally distributed near-identity core tensor.
+    """
+    # Check shape and do something if core slices are non-square
+    assert len(shape) >= 3
+    if shape[-2] != shape[-1]:
+        if torch.prod(torch.tensor(shape[:-3])) != 1:
+            raise ValueError(
+                "Batch core tensor with non-square matrix slices "
+                "requested, pretty sure this isn't what you wanted"
+            )
+        else:
+            warnings.warn(
+                "Core tensor with non-square matrix slices "
+                "requested, is this really what you wanted?"
+            )
+
+    # Initialize core using size-adjusted value of variance
+    std = 1 / shape[-1]
+    core_tensor = std * torch.randn(shape)
+    if is_complex:
+        core_tensor = phaseify(core_tensor)
+    return core_tensor
