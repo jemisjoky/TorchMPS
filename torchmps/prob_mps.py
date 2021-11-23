@@ -35,7 +35,7 @@ from torchmps.mps_base import (
     slim_eval_fun,
 )
 from torchmps.utils2 import phaseify
-from torchmps.embeddings import DataDomain, FixedEmbedding
+from torchmps.embeddings import DataDomain, FixedEmbedding, TrainableEmbedding
 
 
 class ProbMPS(nn.Module):
@@ -136,7 +136,11 @@ class ProbMPS(nn.Module):
         self.embedding = None
 
         # Set up embedding object if desired
-        if embed_fun is not None:
+        if isinstance(embed_fun, (FixedEmbedding, TrainableEmbedding)):
+            self.embedding = embed_fun
+            if hasattr(embed_fun, "emb_dim"):
+                assert self.embedding.emb_dim == input_dim
+        elif embed_fun is not None:
             assert domain is not None
             self.embedding = FixedEmbedding(embed_fun, domain)
             assert self.embedding.emb_dim == input_dim
@@ -163,11 +167,9 @@ class ProbMPS(nn.Module):
             log_probs: Vector with shape `(batch,)` giving the natural
                 logarithm of the probability of each input sequence.
         """
-        # TODO: Convert input to STensors first
-
         # Apply embedding function if it is defined
         if self.embedding is not None:
-            input_data = self.embedding.embed(input_data)
+            input_data = self.embedding(input_data)
 
         if slim_eval:
             if self.use_bias:
@@ -360,7 +362,11 @@ class ProbUnifMPS(ProbMPS):
         self.embedding = None
 
         # Set up embedding object if desired
-        if embed_fun is not None:
+        if isinstance(embed_fun, (FixedEmbedding, TrainableEmbedding)):
+            self.embedding = embed_fun
+            if hasattr(embed_fun, "emb_dim"):
+                assert self.embedding.emb_dim == input_dim
+        elif embed_fun is not None:
             assert domain is not None
             self.embedding = FixedEmbedding(embed_fun, domain)
             assert self.embedding.emb_dim == input_dim
@@ -391,7 +397,7 @@ class ProbUnifMPS(ProbMPS):
 
         # Apply embedding function if it is defined
         if self.embedding is not None:
-            input_data = self.embedding.embed(input_data)
+            input_data = self.embedding(input_data)
 
         if slim_eval:
             if self.use_bias:

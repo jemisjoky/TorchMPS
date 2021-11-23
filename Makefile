@@ -42,7 +42,7 @@ requirements: requirements.txt
 .PHONY: test
 
 test:
-	pytest --ignore=torchmps/tests/benchmarks torchmps/tests
+	pytest -x --ignore=torchmps/tests/benchmarks torchmps/tests
 .PHONY: test-report
 test-report:
 	pytest --cov-report term-missing --cov=torchmps torchmps/tests

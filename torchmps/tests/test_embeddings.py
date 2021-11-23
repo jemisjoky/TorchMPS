@@ -25,7 +25,8 @@ from functools import partial
 import torch
 from hypothesis import given, strategies as st
 
-from torchmps.embeddings import DataDomain, FixedEmbedding, onehot_embed
+from torchmps import ProbMPS
+from torchmps.embeddings import DataDomain, FixedEmbedding, onehot_embed, init_mlp_embed
 
 
 @given(st.booleans(), st.floats(-100, 100), st.floats(0.0001, 1000))
@@ -58,10 +59,33 @@ def test_onehot_embedding(emb_dim):
     # Verify that the embedding function can be called and works fine
     rand_inds1 = torch.randint(emb_dim, (10,))
     rand_inds2 = torch.randint(emb_dim, (10, 5))
-    rand_vecs1 = fixed_embed.embed(rand_inds1)
-    rand_vecs2 = fixed_embed.embed(rand_inds2).reshape(50, emb_dim)
+    rand_vecs1 = fixed_embed(rand_inds1)
+    rand_vecs2 = fixed_embed(rand_inds2).reshape(50, emb_dim)
     rand_inds2 = rand_inds2.reshape(50)
     for vec, idx in zip(rand_vecs1, rand_inds1):
         assert torch.all((vec == 1) == (torch.arange(emb_dim) == idx))
     for vec, idx in zip(rand_vecs2, rand_inds2):
         assert torch.all((vec == 1) == (torch.arange(emb_dim) == idx))
+
+
+@given(st.integers(1, 10), st.integers(1, 3))
+def test_mlp_embedding(input_dim, num_layers):
+    """
+    Verify that MLP embedding function runs and gives properly normalized probs
+    """
+    bond_dim = 10
+    hidden_dim = 10
+    embed_fun = init_mlp_embed(input_dim, num_layers=num_layers, hidden_dims=hidden_dim)
+    mps = ProbMPS(
+        seq_len=1,
+        input_dim=input_dim,
+        bond_dim=bond_dim,
+        complex_params=False,
+        embed_fun=embed_fun,
+    )
+    points = torch.linspace(0, 1, 1000)[:, None]  # Add phony spatial dim
+    log_prob_densities = mps(points)
+    assert log_prob_densities.shape == (1000,)
+    prob_densities = torch.exp(log_prob_densities)
+    total_prob = torch.trapz(prob_densities, points[:, 0])
+    assert torch.allclose(total_prob, torch.ones(()))
