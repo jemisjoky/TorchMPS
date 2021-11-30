@@ -26,7 +26,13 @@ import torch
 from hypothesis import given, strategies as st
 
 from torchmps import ProbMPS
-from torchmps.embeddings import DataDomain, FixedEmbedding, onehot_embed, init_mlp_embed
+from torchmps.embeddings import (
+    DataDomain,
+    FixedEmbedding,
+    onehot_embed,
+    trig_embed,
+    init_mlp_embed,
+)
 
 
 @given(st.booleans(), st.floats(-100, 100), st.floats(0.0001, 1000))
@@ -73,7 +79,7 @@ def test_mlp_embedding(input_dim, num_layers):
     """
     Verify that MLP embedding function runs and gives properly normalized probs
     """
-    bond_dim = 10
+    bond_dim = 8
     hidden_dim = 10
     embed_fun = init_mlp_embed(input_dim, num_layers=num_layers, hidden_dims=hidden_dim)
     mps = ProbMPS(
@@ -83,9 +89,60 @@ def test_mlp_embedding(input_dim, num_layers):
         complex_params=False,
         embed_fun=embed_fun,
     )
-    points = torch.linspace(0, 1, 1000)[:, None]  # Add phony spatial dim
+    points = torch.linspace(0, 1, 100)[:, None]  # Add phony spatial dim
     log_prob_densities = mps(points)
-    assert log_prob_densities.shape == (1000,)
+    assert log_prob_densities.shape == (100,)
     prob_densities = torch.exp(log_prob_densities)
     total_prob = torch.trapz(prob_densities, points[:, 0])
     assert torch.allclose(total_prob, torch.ones(()))
+
+
+@given(st.integers(1, 10))
+def test_frameified_trig_embedding(input_dim):
+    """
+    Verify that frameified trig embedding is indeed a frame
+    """
+    embed_fun = partial(trig_embed, emb_dim=input_dim)
+    data_domain = DataDomain(continuous=True, min_val = 0., max_val=1.)
+    fixed_embed = FixedEmbedding(embed_fun, data_domain, frameify=True)
+
+    # Manually compute the lambda matrix for frameified embedding
+    points = torch.linspace(0, 1, steps=1000)
+    emb_vecs = fixed_embed(points)
+    emb_mats = torch.einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
+    lamb_mat = torch.trapz(emb_mats, points, dim=0)
+
+    # Verify the lambda matrix for framified embedding is identity
+    try:
+        assert torch.allclose(lamb_mat, torch.eye(input_dim))
+    except AssertionError:
+        breakpoint()
+        emb_vecs = fixed_embed(points)
+
+    # bond_dim = 8
+
+    # # Verify that the embedding function can be called and works fine
+    # rand_inds1 = torch.randint(emb_dim, (10,))
+    # rand_inds2 = torch.randint(emb_dim, (10, 5))
+    # rand_vecs1 = fixed_embed(rand_inds1)
+    # rand_vecs2 = fixed_embed(rand_inds2).reshape(50, emb_dim)
+    # rand_inds2 = rand_inds2.reshape(50)
+    # for vec, idx in zip(rand_vecs1, rand_inds1):
+    #     assert torch.all((vec == 1) == (torch.arange(emb_dim) == idx))
+    # for vec, idx in zip(rand_vecs2, rand_inds2):
+    #     assert torch.all((vec == 1) == (torch.arange(emb_dim) == idx))
+
+
+    # mps = ProbMPS(
+    #     seq_len=1,
+    #     input_dim=input_dim,
+    #     bond_dim=bond_dim,
+    #     complex_params=False,
+    #     embed_fun=embed_fun,
+    # )
+    # points = torch.linspace(0, 1, 1000)[:, None]  # Add phony spatial dim
+    # log_prob_densities = mps(points)
+    # assert log_prob_densities.shape == (1000,)
+    # prob_densities = torch.exp(log_prob_densities)
+    # total_prob = torch.trapz(prob_densities, points[:, 0])
+    # assert torch.allclose(total_prob, torch.ones(()))
