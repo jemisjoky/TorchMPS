@@ -25,6 +25,7 @@ from functools import partial
 from typing import Union, Optional, Callable
 
 import torch
+import numpy as np
 from torch import nn
 
 from .utils2 import einsum
@@ -88,8 +89,12 @@ class TrainableEmbedding(nn.Module):
 
         # Save defining data
         self.domain = data_domain
+
         # Need to add on singleton dimension to agree with nn.Module format
-        self.emb_fun = lambda x: emb_fun(x[..., None])
+        global _full_embed  # Hack that allows parent MPS to be pickleable
+        def _full_embed(x):
+            return emb_fun(x[..., None])
+        self.emb_fun = _full_embed
         # self.emb_fun = emb_fun
 
     def make_lambda(self, num_points: int = 1000):
@@ -155,7 +160,7 @@ class FixedEmbedding(nn.Module):
             the data fed to the embedding function is defined.
     """
 
-    def __init__(self, emb_fun: Callable, data_domain: DataDomain):
+    def __init__(self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False):
         super().__init__()
         assert hasattr(emb_fun, "__call__")
 
@@ -255,6 +260,30 @@ def trig_embed(data, emb_dim=2):
     emb_data = torch.stack(emb_data, dim=-1)
     assert emb_data.shape == data.shape + (emb_dim,)
     return emb_data
+
+
+@torch.no_grad()    # Implementation in Numpy
+def legendre_embed(data, emb_dim=2):
+    r"""
+    Function giving embedding in terms of (orthogonal) Legendre polynomials
+
+    Note that all polynomials are rescaled to lie on the unit interval, so that
+    integrating the product of two polynomials over [0, 1] will give a
+    Kronecker delta
+    """
+    # Function initializing Legendre polynomials over [0, 1] from coefficients
+    leg_fun = partial(np.polynomial.Legendre, domain=[0., 1.])
+
+    emb_data = []
+    data = data.numpy()
+    base_coef = [0.] * emb_dim
+    for s in range(emb_dim):
+        coef = base_coef.copy()
+        coef[s] = 1.
+        emb_data.append(leg_fun(coef)(data))
+    emb_data = np.stack(emb_data, axis=-1)
+    assert emb_data.shape == data.shape + (emb_dim,)
+    return torch.tensor(emb_data).float()
 
 
 def init_mlp_embed(output_dim, num_layers=2, hidden_dims=[100], data_domain=None):
