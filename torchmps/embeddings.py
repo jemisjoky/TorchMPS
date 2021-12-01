@@ -66,6 +66,127 @@ class DataDomain:
         self.continuous = continuous
 
 
+class FixedEmbedding(nn.Module):
+    r"""
+    Framework for fixed embedding function converting data to vectors
+
+    Args:
+        emb_fun (function): Function taking arbitrary tensors of values and
+            returning tensor of embedded vectors, which has one additional
+            axis in the last position. These values must be either integers,
+            for discrete data domains, or reals, for continuous data domains.
+        data_domain (DataDomain): Object which specifies the domain on which
+            the data fed to the embedding function is defined.
+        frameify (bool): Whether to rescale embedding vectors to make the
+            embedding function into a frame. (Default: False)
+    """
+
+    def __init__(
+        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False
+    ):
+        super().__init__()
+        assert hasattr(emb_fun, "__call__")
+
+        # Save defining data, compute lambda matrix
+        self.domain = data_domain
+        self.frameify = frameify
+        self.emb_fun = emb_fun
+        self.make_lambda()
+
+        # Compute correcting "skew matrix" for frameified embedding
+        if self.frameify:
+            self.make_lambda(shrink_mat=False)
+            self.make_skew_mat()
+
+    @torch.no_grad()
+    def make_skew_mat(self):
+        """
+        Compute skew matrix that converts embedding to a frame (when applied
+        to vectors output by the raw embedding function)
+
+        This is just an inverse square root of the lambda (i.e. covariance)
+        matrix, and I use the Cholesky decomposition to compute this
+        """
+        # Need to have the full lambda matrix
+        self.make_lambda(shrink_mat=False)
+
+        # Upgrade to double precision for the sensitive matrix operations
+        original_dtype = self.lamb_mat.dtype
+        if self.lamb_mat.is_complex():
+            lamb_mat = self.lamb_mat.to(torch.complex128)
+        else:
+            lamb_mat = self.lamb_mat.double()
+
+        # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
+        cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
+        skew_mat = torch.linalg.pinv(cholesky_factor)
+        self.skew_mat = skew_mat.to(original_dtype)
+
+    @torch.no_grad()
+    def make_lambda(self, num_points: int = 1000, shrink_mat: bool = True):
+        """
+        Compute the lambda matrix used for normalization
+        """
+        # Compute the raw lambda matrix, computing number of points if needed
+        if self.domain.continuous:
+            points = torch.linspace(
+                self.domain.min_val, self.domain.max_val, steps=num_points
+            )
+            self.num_points = num_points
+            emb_vecs = self.emb_fun(points)
+            assert emb_vecs.ndim == 2
+            self.emb_dim = emb_vecs.shape[1]
+            assert emb_vecs.shape[0] == num_points
+
+            # Get rank-1 matrices for each point, then numerically integrate
+            emb_mats = einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
+            lamb_mat = torch.trapz(emb_mats, points, dim=0)
+
+        else:
+            points = torch.arange(self.domain.max_val).long()
+            emb_vecs = self.emb_fun(points)
+            assert emb_vecs.ndim == 2
+            self.emb_dim = emb_vecs.shape[1]
+            assert emb_vecs.shape[0] == self.domain.max_val
+
+            # Get rank-1 matrices for each point, then sum together
+            emb_mats = einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
+            lamb_mat = torch.sum(emb_mats, dim=0)
+
+        assert lamb_mat.ndim == 2
+        assert lamb_mat.shape[0] == lamb_mat.shape[1]
+        self.lamb_mat = lamb_mat
+
+        # Check if the computed matrix is diagonal or multiple of the identity
+        if shrink_mat and torch.allclose(lamb_mat.diag().diag(), lamb_mat):
+            lamb_mat = lamb_mat.diag()
+            if torch.allclose(lamb_mat.mean(), lamb_mat):
+                self.lamb_mat = lamb_mat.mean()
+            else:
+                self.lamb_mat = lamb_mat
+
+    def forward(self, input_data):
+        """
+        Embed input data via the user-specified embedding function
+        """
+        emb_vecs = self.emb_fun(input_data)
+
+        # For frameified embeddings, skew matrix is applied to embedded vectors
+        if self.frameify:
+            # Broadcast skew matrix so we can use batch matrix multiplication
+            num_batch_dims = emb_vecs.ndim - 1
+            emb_vecs = emb_vecs[..., None, :]
+            skew_mat = self.skew_mat[(None,) * num_batch_dims]
+            emb_vecs = torch.matmul(emb_vecs, skew_mat)
+            # emb_vecs = torch.matmul(skew_mat, emb_vecs)
+
+            # Remove extra singleton dimension
+            assert emb_vecs.size(-2) == 1
+            return emb_vecs[..., 0, :]
+
+        return emb_vecs
+
+
 class TrainableEmbedding(nn.Module):
     r"""
     Framework for trainable embedding function converting data to vectors
@@ -109,10 +230,17 @@ class TrainableEmbedding(nn.Module):
         if not hasattr(self, "lamb_mat"):
             self.make_lambda()
 
-        # Compute the pseudoinverse of Cholesky factor of the lambda matrix
-        chol_factor = torch.linalg.cholesky(self.lamb_mat)
-        skew_mat = torch.linalg.pinv(chol_factor)
-        return skew_mat.T.conj()  # Need the adjoint of the pseudoinverse
+        # Upgrade to double precision for the sensitive matrix operations
+        original_dtype = self.lamb_mat.dtype
+        if self.lamb_mat.is_complex():
+            lamb_mat = self.lamb_mat.to(torch.complex128)
+        else:
+            lamb_mat = self.lamb_mat.double()
+
+        # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
+        cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
+        skew_mat = torch.linalg.pinv(cholesky_factor)
+        self.skew_mat = skew_mat.to(original_dtype)
 
     def make_lambda(self, num_points: int = 100, shrink_mat: bool = True):
         """
@@ -168,124 +296,15 @@ class TrainableEmbedding(nn.Module):
         if self.frameify:
             self.make_skew_mat()
 
-            # Broadcast skew matrix so we can use batch mm
-            num_batch_dims = emb_vecs.ndim - 2
-            skew_mat = self.skew_mat[(None,) * num_batch_dims]
-            emb_vecs = torch.matmul(skew_mat, emb_vecs)
-
-        return emb_vecs
-
-
-class FixedEmbedding(nn.Module):
-    r"""
-    Framework for fixed embedding function converting data to vectors
-
-    Args:
-        emb_fun (function): Function taking arbitrary tensors of values and
-            returning tensor of embedded vectors, which has one additional
-            axis in the last position. These values must be either integers,
-            for discrete data domains, or reals, for continuous data domains.
-        data_domain (DataDomain): Object which specifies the domain on which
-            the data fed to the embedding function is defined.
-        frameify (bool): Whether to rescale embedding vectors to make the
-            embedding function into a frame. (Default: False)
-    """
-
-    def __init__(
-        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False
-    ):
-        super().__init__()
-        assert hasattr(emb_fun, "__call__")
-
-        # Save defining data, compute lambda matrix
-        self.domain = data_domain
-        self.frameify = frameify
-        self.emb_fun = emb_fun
-        self.make_lambda()
-
-        # Compute correcting "skew matrix" for frameified embedding 
-        if self.frameify:
-            self.make_lambda(shrink_mat=False)
-            self.make_skew_mat()
-
-    @torch.no_grad()
-    def make_skew_mat(self):
-        """
-        Compute skew matrix that converts embedding to a frame (when applied
-        to vectors output by the raw embedding function)
-
-        This is just an inverse square root of the lambda (i.e. covariance)
-        matrix, and I use the Cholesky decomposition to compute this
-        """
-        # Need to have the lambda matrix already computed
-        if not hasattr(self, "lamb_mat"):
-            self.make_lambda(shrink_mat=False)
-
-        # Compute the pseudoinverse of Cholesky factor of the lambda matrix
-        chol_factor = torch.linalg.cholesky(self.lamb_mat)
-        skew_mat = torch.linalg.pinv(chol_factor)
-        self.skew_mat = skew_mat.T.conj()  # Need the adjoint of the pseudoinverse
-
-    @torch.no_grad()
-    def make_lambda(self, num_points: int = 1000, shrink_mat: bool = True):
-        """
-        Compute the lambda matrix used for normalization
-        """
-        # Compute the raw lambda matrix, computing number of points if needed
-        if self.domain.continuous:
-            points = torch.linspace(
-                self.domain.min_val, self.domain.max_val, steps=num_points
-            )
-            self.num_points = num_points
-            emb_vecs = self.emb_fun(points)
-            assert emb_vecs.ndim == 2
-            self.emb_dim = emb_vecs.shape[1]
-            assert emb_vecs.shape[0] == num_points
-
-            # Get rank-1 matrices for each point, then numerically integrate
-            emb_mats = einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
-            lamb_mat = torch.trapz(emb_mats, points, dim=0)
-
-        else:
-            points = torch.arange(self.domain.max_val).long()
-            emb_vecs = self.emb_fun(points)
-            assert emb_vecs.ndim == 2
-            self.emb_dim = emb_vecs.shape[1]
-            assert emb_vecs.shape[0] == self.domain.max_val
-
-            # Get rank-1 matrices for each point, then sum together
-            emb_mats = einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
-            lamb_mat = torch.sum(emb_mats, dim=0)
-
-        assert lamb_mat.ndim == 2
-        assert lamb_mat.shape[0] == lamb_mat.shape[1]
-        self.lamb_mat = lamb_mat
-        
-        # Check if the computed matrix is diagonal or multiple of the identity
-        if shrink_mat and torch.allclose(lamb_mat.diag().diag(), lamb_mat):
-            lamb_mat = lamb_mat.diag()
-            if torch.allclose(lamb_mat.mean(), lamb_mat):
-                self.lamb_mat = lamb_mat.mean()
-            else:
-                self.lamb_mat = lamb_mat
-
-    def forward(self, input_data):
-        """
-        Embed input data via the user-specified embedding function
-        """
-        emb_vecs = self.emb_fun(input_data)
-
-        # For frameified embeddings, skew matrix is applied to embedded vectors
-        if self.frameify:
             # Broadcast skew matrix so we can use batch matrix multiplication
-            emb_vecs = emb_vecs[..., None]
-            num_batch_dims = emb_vecs.ndim - 2
+            num_batch_dims = emb_vecs.ndim - 1
+            emb_vecs = emb_vecs[..., None, :]
             skew_mat = self.skew_mat[(None,) * num_batch_dims]
-            emb_vecs = torch.matmul(skew_mat, emb_vecs)
+            emb_vecs = torch.matmul(emb_vecs, skew_mat)
 
             # Remove extra singleton dimension
-            assert emb_vecs.size(-1) == 1
-            return emb_vecs[..., 0]
+            assert emb_vecs.size(-2) == 1
+            return emb_vecs[..., 0, :]
 
         return emb_vecs
 
@@ -357,7 +376,9 @@ def legendre_embed(data, emb_dim=2):
     return torch.tensor(emb_data).float()
 
 
-def init_mlp_embed(output_dim, num_layers=2, hidden_dims=[100], data_domain=None):
+def init_mlp_embed(
+    output_dim, num_layers=2, hidden_dims=[100], data_domain=None, frameify=False
+):
     """
     Initialize multilayer perceptron embedding acting on scalar inputs
 
@@ -367,6 +388,8 @@ def init_mlp_embed(output_dim, num_layers=2, hidden_dims=[100], data_domain=None
         hidden_dims: List of dimensions of the hidden layers for the MLP
         data_domain: If scalar inputs are not on the unit interval, a custom
             data domain must be specified to allow correct normalization
+        frameify: Whether or not to rescale embedding vectors to ensure frame
+            condition is met throughout training
     """
     # Put all layer dimensions in single list
     if isinstance(hidden_dims, int):
@@ -384,7 +407,7 @@ def init_mlp_embed(output_dim, num_layers=2, hidden_dims=[100], data_domain=None
     # Initialize and return the trainable embedding function
     if data_domain is None:
         data_domain = unit_interval
-    return TrainableEmbedding(emb_fun, data_domain)
+    return TrainableEmbedding(emb_fun, data_domain, frameify=frameify)
 
 
 sincos_embed = partial(trig_embed, emb_dim=2)
