@@ -79,10 +79,11 @@ class FixedEmbedding(nn.Module):
             the data fed to the embedding function is defined.
         frameify (bool): Whether to rescale embedding vectors to make the
             embedding function into a frame. (Default: False)
+        dtype: Datatype to save associated lambda matrix in. (Default: float32)
     """
 
     def __init__(
-        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False
+        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False, dtype: torch.dtype = torch.float32
     ):
         super().__init__()
         assert hasattr(emb_fun, "__call__")
@@ -91,6 +92,7 @@ class FixedEmbedding(nn.Module):
         self.domain = data_domain
         self.frameify = frameify
         self.emb_fun = emb_fun
+        self.dtype = dtype
         self.make_lambda()
 
         # Compute correcting "skew matrix" for frameified embedding
@@ -117,13 +119,14 @@ class FixedEmbedding(nn.Module):
             lamb_mat = self.raw_lamb_mat.double()
 
         # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
+        # TODO: Replace this with something using eigenvalue factorization
         cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
         skew_mat = torch.linalg.pinv(cholesky_factor)
+
+        # Unskew lambda matrix, then save matrices as initial dtypes
+        self.lamb_mat = (skew_mat.T @ lamb_mat @ skew_mat).to(original_dtype)
         self.skew_mat = skew_mat.to(original_dtype)
-
-        # Use of skew matrix changes lamb_mat to the identity
-        self.lamb_mat = torch.ones(())
-
+        
     @torch.no_grad()
     def make_lambda(self, num_points: int = 1000, shrink_mat: bool = True):
         """
@@ -167,6 +170,7 @@ class FixedEmbedding(nn.Module):
                 lamb_mat = lamb_mat
 
         # For unframeified embeddings, use as regular lamb_mat
+        lamb_mat = lamb_mat.to(self.dtype)
         self.raw_lamb_mat = lamb_mat
         if not self.frameify:
             self.lamb_mat = self.raw_lamb_mat
@@ -184,7 +188,6 @@ class FixedEmbedding(nn.Module):
             emb_vecs = emb_vecs[..., None, :]
             skew_mat = self.skew_mat[(None,) * num_batch_dims]
             emb_vecs = torch.matmul(emb_vecs, skew_mat)
-            # emb_vecs = torch.matmul(skew_mat, emb_vecs)
 
             # Remove extra singleton dimension
             assert emb_vecs.size(-2) == 1
@@ -244,12 +247,13 @@ class TrainableEmbedding(nn.Module):
             lamb_mat = self.raw_lamb_mat.double()
 
         # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
+        # TODO: Replace this with something using eigenvalue factorization
         cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
         skew_mat = torch.linalg.pinv(cholesky_factor)
-        self.skew_mat = skew_mat.to(original_dtype)
 
-        # Use of skew matrix changes lamb_mat to the identity
-        self.lamb_mat = torch.ones(())
+        # Unskew lambda matrix, then save matrices as initial dtypes
+        self.lamb_mat = (skew_mat.T @ lamb_mat @ skew_mat).to(original_dtype)
+        self.skew_mat = skew_mat.to(original_dtype)
 
     def make_lambda(self, num_points: int = 100, shrink_mat: bool = True):
         """

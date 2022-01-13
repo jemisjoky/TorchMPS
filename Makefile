@@ -40,9 +40,13 @@ requirements: requirements.txt
 	pip install -r requirements.txt
 
 .PHONY: test
-
 test:
 	pytest -x --ignore=torchmps/tests/benchmarks torchmps/tests
+
 .PHONY: test-report
 test-report:
 	pytest --cov-report term-missing --cov=torchmps torchmps/tests
+
+.PHONY: todo
+todo:
+	grep -rn "TODO" torchmps/

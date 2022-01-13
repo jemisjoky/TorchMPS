@@ -25,7 +25,7 @@ from functools import partial
 from itertools import product
 
 import torch
-from hypothesis import given, strategies as st
+from hypothesis import given, settings, strategies as st
 
 from torchmps import ProbMPS
 from torchmps.embeddings import (
@@ -122,18 +122,13 @@ def test_frameified_embeddings(raw_embed, input_dim):
     # Verify the lambda matrix for framified embedding is identity
     assert allcloseish(lamb_mat, torch.eye(input_dim), tol=input_dim * 1e-2)
 
-    if raw_embed is legendre_embed:
-        breakpoint()
 
-
-@given(st.integers(1, 10))
+@given(st.integers(1, 50))
 def test_legendre_embedding(input_dim):
     """
     Verify that Legendre polynomial embedding is indeed a frame
     """
     embed_fun = partial(legendre_embed, emb_dim=input_dim)
-    # data_domain = DataDomain(continuous=True, min_val=0.0, max_val=1.0)
-    # fixed_embed = FixedEmbedding(embed_fun, data_domain, frameify=frameify)
 
     # Manually compute the lambda matrix for frameified embedding
     points = torch.linspace(0, 1, steps=1000)
@@ -148,14 +143,16 @@ def test_legendre_embedding(input_dim):
 @pytest.mark.parametrize(
     "raw_embed, frameify", list(product([trig_embed, legendre_embed], [False, True]))
 )
-@given(st.integers(1, 10), st.booleans())
+@settings(deadline=None)
+@given(st.integers(1, 15), st.booleans())
 def test_normalization(raw_embed, frameify, input_dim, complex_params):
     """
     For a 2-mode MPS, verify that probabilities integrate to 1
     """
+    torch.manual_seed(0)
     complex_params=False
     bond_dim = 10
-    num_points = 50
+    num_points = 200 if raw_embed is legendre_embed else 50
     embed_fun = FixedEmbedding(
         partial(raw_embed, emb_dim=input_dim), unit_interval, frameify=frameify
     )
@@ -177,17 +174,22 @@ def test_normalization(raw_embed, frameify, input_dim, complex_params):
     points = torch.linspace(0, 1, num_points)
     x, y = torch.meshgrid(points, points, indexing="ij")
     all_points = torch.stack((x, y), dim=-1)
-    dx = dy = 1 / (num_points - 1)
 
     # Feed flattened (x, y) pairs to MPS, then integrate over both axes
-    log_pdf = mps(all_points.reshape(-1, 2))
-    pdf = log_pdf.reshape(num_points, num_points).exp()
-    int_prob = torch.trapz(torch.trapz(pdf, dx=dy, dim=1), dx=dx, dim=0)
+    log_pdf = mps(all_points.reshape(-1, 2)).reshape(num_points, num_points)
+    pdf = log_pdf.exp()
+    int_prob = torch.trapz(torch.trapz(pdf, points, dim=1), points, dim=0)
 
     # try:
-    assert allcloseish(int_prob, torch.ones((), dtype=int_prob.dtype), tol=1e-2)
-    # except:
+    assert allcloseish(int_prob, torch.ones((), dtype=int_prob.dtype), tol=1e-1)
+    # except RuntimeError:
     #     breakpoint()
+    #     lamb_mat = mps.embedding.lamb_mat
+    #     raw_lamb_mat = mps.embedding.raw_lamb_mat
+    #     cholesky_factor = torch.linalg.cholesky(raw_lamb_mat.double()).T.conj()
+    #     skew_mat = torch.linalg.pinv(cholesky_factor)
+    #     print((skew_mat.T @ lamb_mat @ skew_mat - lamb_mat).norm())
+
 
 
 # # TODO: Get the following test actually working

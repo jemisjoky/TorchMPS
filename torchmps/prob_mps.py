@@ -171,6 +171,10 @@ class ProbMPS(nn.Module):
         if self.embedding is not None:
             input_data = self.embedding(input_data)
 
+        # If input isn't integral, convert it to same dtype as core tensors
+        if input_data.is_floating_point() or input_data.is_complex():
+            input_data = input_data.to(self.core_tensors.dtype)
+
         if slim_eval:
             if self.use_bias:
                 raise ValueError("Bias matrices not supported for slim_eval")
@@ -250,7 +254,10 @@ class ProbMPS(nn.Module):
             core_tensors = self.core_tensors
 
         # Account for non-trivial lambda function in the embedding
-        lamb_mat = None if self.embedding is None else self.embedding.lamb_mat
+        if self.embedding is None:
+            lamb_mat = None
+        else:
+            lamb_mat = self.embedding.lamb_mat.to(self.core_tensors.dtype)
 
         return get_log_norm(core_tensors, self.edge_vecs, lamb_mat=lamb_mat)
 
@@ -453,7 +460,10 @@ class ProbUnifMPS(ProbMPS):
             core_tensors = self.core_tensors
 
         # Account for non-trivial lambda function in the embedding
-        lamb_mat = None if self.embedding is None else self.embedding.lamb_mat
+        if self.embedding is None:
+            lamb_mat = None
+        else:
+            lamb_mat = self.embedding.lamb_mat.to(self.core_tensors.dtype)
 
         return get_log_norm(
             core_tensors, self.edge_vecs, lamb_mat=lamb_mat, length=data_len
