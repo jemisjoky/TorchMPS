@@ -20,7 +20,9 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 """Tests for embedding functions"""
+import pytest
 from functools import partial
+from itertools import product
 
 import torch
 from hypothesis import given, strategies as st
@@ -28,10 +30,12 @@ from hypothesis import given, strategies as st
 from torchmps import ProbMPS
 from torchmps.embeddings import (
     DataDomain,
+    unit_interval,
     FixedEmbedding,
     onehot_embed,
     trig_embed,
     init_mlp_embed,
+    legendre_embed,
 )
 from torchmps.tests.utils_for_tests import allcloseish
 
@@ -98,23 +102,92 @@ def test_mlp_embedding(input_dim, num_layers):
     assert torch.allclose(total_prob, torch.ones(()))
 
 
+@pytest.mark.parametrize("raw_embed", [trig_embed, legendre_embed])
 @given(st.integers(1, 10))
-def test_frameified_trig_embedding(input_dim):
+def test_frameified_embeddings(raw_embed, input_dim):
     """
-    Verify that frameified trig embedding is indeed a frame
+    Verify that frameified trig and legendre embeddings are indeed a frame
     """
-    embed_fun = partial(trig_embed, emb_dim=input_dim)
+    embed_fun = partial(raw_embed, emb_dim=input_dim)
     data_domain = DataDomain(continuous=True, min_val=0.0, max_val=1.0)
     fixed_embed = FixedEmbedding(embed_fun, data_domain, frameify=True)
 
     # Manually compute the lambda matrix for frameified embedding
-    points = torch.linspace(0, 1, steps=1000)
+    num_points = 1000
+    points = torch.linspace(0, 1, steps=num_points)
     emb_vecs = fixed_embed(points)
     emb_mats = torch.einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
     lamb_mat = torch.trapz(emb_mats, points, dim=0)
 
     # Verify the lambda matrix for framified embedding is identity
     assert allcloseish(lamb_mat, torch.eye(input_dim), tol=input_dim * 1e-2)
+
+    if raw_embed is legendre_embed:
+        breakpoint()
+
+
+@given(st.integers(1, 10))
+def test_legendre_embedding(input_dim):
+    """
+    Verify that Legendre polynomial embedding is indeed a frame
+    """
+    embed_fun = partial(legendre_embed, emb_dim=input_dim)
+    # data_domain = DataDomain(continuous=True, min_val=0.0, max_val=1.0)
+    # fixed_embed = FixedEmbedding(embed_fun, data_domain, frameify=frameify)
+
+    # Manually compute the lambda matrix for frameified embedding
+    points = torch.linspace(0, 1, steps=1000)
+    emb_vecs = embed_fun(points)
+    emb_mats = torch.einsum("bi,bj->bij", emb_vecs, emb_vecs.conj())
+    lamb_mat = torch.trapz(emb_mats, points, dim=0)
+
+    # Verify the lambda matrix for framified embedding is identity
+    assert allcloseish(lamb_mat, torch.eye(input_dim), tol=input_dim * 1e-2)
+
+
+@pytest.mark.parametrize(
+    "raw_embed, frameify", list(product([trig_embed, legendre_embed], [False, True]))
+)
+@given(st.integers(1, 10), st.booleans())
+def test_normalization(raw_embed, frameify, input_dim, complex_params):
+    """
+    For a 2-mode MPS, verify that probabilities integrate to 1
+    """
+    complex_params=False
+    bond_dim = 10
+    num_points = 50
+    embed_fun = FixedEmbedding(
+        partial(raw_embed, emb_dim=input_dim), unit_interval, frameify=frameify
+    )
+    mps = ProbMPS(
+        seq_len=2,
+        input_dim=input_dim,
+        bond_dim=bond_dim,
+        complex_params=complex_params,
+        embed_fun=embed_fun,
+    )
+
+    # Cast to double precision, since we need it for the following
+    if complex_params:
+        mps.to(torch.complex128)
+    else:
+        mps.double()
+
+    # Define a 2D mesh grid covering the unit square, stack x and y coordinates
+    points = torch.linspace(0, 1, num_points)
+    x, y = torch.meshgrid(points, points, indexing="ij")
+    all_points = torch.stack((x, y), dim=-1)
+    dx = dy = 1 / (num_points - 1)
+
+    # Feed flattened (x, y) pairs to MPS, then integrate over both axes
+    log_pdf = mps(all_points.reshape(-1, 2))
+    pdf = log_pdf.reshape(num_points, num_points).exp()
+    int_prob = torch.trapz(torch.trapz(pdf, dx=dy, dim=1), dx=dx, dim=0)
+
+    # try:
+    assert allcloseish(int_prob, torch.ones((), dtype=int_prob.dtype), tol=1e-2)
+    # except:
+    #     breakpoint()
 
 
 # # TODO: Get the following test actually working

@@ -95,7 +95,6 @@ class FixedEmbedding(nn.Module):
 
         # Compute correcting "skew matrix" for frameified embedding
         if self.frameify:
-            self.make_lambda(shrink_mat=False)
             self.make_skew_mat()
 
     @torch.no_grad()
@@ -111,16 +110,19 @@ class FixedEmbedding(nn.Module):
         self.make_lambda(shrink_mat=False)
 
         # Upgrade to double precision for the sensitive matrix operations
-        original_dtype = self.lamb_mat.dtype
-        if self.lamb_mat.is_complex():
-            lamb_mat = self.lamb_mat.to(torch.complex128)
+        original_dtype = self.raw_lamb_mat.dtype
+        if self.raw_lamb_mat.is_complex():
+            lamb_mat = self.raw_lamb_mat.to(torch.complex128)
         else:
-            lamb_mat = self.lamb_mat.double()
+            lamb_mat = self.raw_lamb_mat.double()
 
         # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
         cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
         skew_mat = torch.linalg.pinv(cholesky_factor)
         self.skew_mat = skew_mat.to(original_dtype)
+
+        # Use of skew matrix changes lamb_mat to the identity
+        self.lamb_mat = torch.ones(())
 
     @torch.no_grad()
     def make_lambda(self, num_points: int = 1000, shrink_mat: bool = True):
@@ -155,15 +157,19 @@ class FixedEmbedding(nn.Module):
 
         assert lamb_mat.ndim == 2
         assert lamb_mat.shape[0] == lamb_mat.shape[1]
-        self.lamb_mat = lamb_mat
 
         # Check if the computed matrix is diagonal or multiple of the identity
         if shrink_mat and torch.allclose(lamb_mat.diag().diag(), lamb_mat):
             lamb_mat = lamb_mat.diag()
             if torch.allclose(lamb_mat.mean(), lamb_mat):
-                self.lamb_mat = lamb_mat.mean()
+                lamb_mat = lamb_mat.mean()
             else:
-                self.lamb_mat = lamb_mat
+                lamb_mat = lamb_mat
+
+        # For unframeified embeddings, use as regular lamb_mat
+        self.raw_lamb_mat = lamb_mat
+        if not self.frameify:
+            self.lamb_mat = self.raw_lamb_mat
 
     def forward(self, input_data):
         """
@@ -172,7 +178,7 @@ class FixedEmbedding(nn.Module):
         emb_vecs = self.emb_fun(input_data)
 
         # For frameified embeddings, skew matrix is applied to embedded vectors
-        if self.frameify:
+        if hasattr(self, "frameify") and self.frameify:
             # Broadcast skew matrix so we can use batch matrix multiplication
             num_batch_dims = emb_vecs.ndim - 1
             emb_vecs = emb_vecs[..., None, :]
@@ -227,20 +233,23 @@ class TrainableEmbedding(nn.Module):
         matrix, and I use the Cholesky decomposition to compute this
         """
         # Need to have the lambda matrix already computed
-        if not hasattr(self, "lamb_mat"):
+        if not hasattr(self, "raw_lamb_mat"):
             self.make_lambda()
 
         # Upgrade to double precision for the sensitive matrix operations
-        original_dtype = self.lamb_mat.dtype
-        if self.lamb_mat.is_complex():
-            lamb_mat = self.lamb_mat.to(torch.complex128)
+        original_dtype = self.raw_lamb_mat.dtype
+        if self.raw_lamb_mat.is_complex():
+            lamb_mat = self.raw_lamb_mat.to(torch.complex128)
         else:
-            lamb_mat = self.lamb_mat.double()
+            lamb_mat = self.raw_lamb_mat.double()
 
         # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
         cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
         skew_mat = torch.linalg.pinv(cholesky_factor)
         self.skew_mat = skew_mat.to(original_dtype)
+
+        # Use of skew matrix changes lamb_mat to the identity
+        self.lamb_mat = torch.ones(())
 
     def make_lambda(self, num_points: int = 100, shrink_mat: bool = True):
         """
@@ -274,15 +283,19 @@ class TrainableEmbedding(nn.Module):
 
         assert lamb_mat.ndim == 2
         assert lamb_mat.shape[0] == lamb_mat.shape[1]
-        self.lamb_mat = lamb_mat
 
         # Check if the computed matrix is diagonal or multiple of the identity
         if shrink_mat and torch.allclose(lamb_mat.diag().diag(), lamb_mat):
             lamb_mat = lamb_mat.diag()
             if torch.allclose(lamb_mat.mean(), lamb_mat):
-                self.lamb_mat = lamb_mat.mean()
+                lamb_mat = lamb_mat.mean()
             else:
-                self.lamb_mat = lamb_mat
+                lamb_mat = lamb_mat
+
+        # For unframeified embeddings, use as regular lamb_mat
+        self.raw_lamb_mat = lamb_mat
+        if not self.frameify:
+            self.lamb_mat = self.raw_lamb_mat
 
     def forward(self, input_data):
         """
@@ -293,7 +306,7 @@ class TrainableEmbedding(nn.Module):
 
         emb_vecs = self.emb_fun(input_data[..., None])
 
-        if self.frameify:
+        if hasattr(self, "frameify") and self.frameify:
             self.make_skew_mat()
 
             # Broadcast skew matrix so we can use batch matrix multiplication
@@ -355,7 +368,7 @@ def trig_embed(data, emb_dim=2):
 @torch.no_grad()  # Implementation in Numpy
 def legendre_embed(data, emb_dim=2):
     r"""
-    Function giving embedding in terms of (orthogonal) Legendre polynomials
+    Function giving embedding in terms of (orthonormal) Legendre polynomials
 
     Note that all polynomials are rescaled to lie on the unit interval, so that
     integrating the product of two polynomials over [0, 1] will give a
@@ -370,7 +383,11 @@ def legendre_embed(data, emb_dim=2):
     for s in range(emb_dim):
         coef = base_coef.copy()
         coef[s] = 1.0
-        emb_data.append(leg_fun(coef)(data))
+        raw_values = leg_fun(coef)(data)
+
+        # Rescale the values to ensure each polynomial has unit norm (c.f.
+        # https://en.wikipedia.org/wiki/Legendre_polynomials#Orthogonality_and_completeness)
+        emb_data.append(sqrt(2 * s + 1) * raw_values)
     emb_data = np.stack(emb_data, axis=-1)
     assert emb_data.shape == data.shape + (emb_dim,)
     return torch.tensor(emb_data).float()
