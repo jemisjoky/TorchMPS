@@ -188,7 +188,6 @@ def test_normalization(raw_embed, frameify, input_dim, complex_params):
     assert allcloseish(int_prob, torch.ones((), dtype=int_prob.dtype), tol=1e-1)
 
 
-
 # # TODO: Get the following test actually working
 # @given(st.integers(1, 10), st.integers(1, 3))
 # def test_frameified_mlp_embedding(input_dim, num_layers):

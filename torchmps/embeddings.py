@@ -83,21 +83,25 @@ class FixedEmbedding(nn.Module):
     """
 
     def __init__(
-        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False, dtype: torch.dtype = torch.float32
+        self,
+        emb_fun: Callable,
+        data_domain: DataDomain,
+        frameify: bool = False,
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         assert hasattr(emb_fun, "__call__")
 
-        # Save defining data, compute lambda matrix
+        # Save defining data
         self.domain = data_domain
         self.frameify = frameify
         self.emb_fun = emb_fun
         self.dtype = dtype
-        self.make_lambda()
 
-        # Compute correcting "skew matrix" for frameified embedding
+        # Compute lambda matrix and "skew matrix" for frameified embedding
         if self.frameify:
             self.make_skew_mat()
+        self.make_lambda()
 
     @torch.no_grad()
     def make_skew_mat(self):
@@ -105,8 +109,8 @@ class FixedEmbedding(nn.Module):
         Compute skew matrix that converts embedding to a frame (when applied
         to vectors output by the raw embedding function)
 
-        This is just an inverse square root of the lambda, which satisfies
-        S
+        This is just an inverse square root of the Lambda, which satisfies
+        S @ Lambda @ S.H = P, for P the projection onto the support of Lambda.
         """
         # Need to have the full lambda matrix
         self.make_lambda(shrink_mat=False)
@@ -132,7 +136,7 @@ class FixedEmbedding(nn.Module):
         # Unskew lambda matrix, then save matrices as initial dtypes
         self.lamb_mat = (skew_mat.T.conj() @ lamb_mat @ skew_mat).to(original_dtype)
         self.skew_mat = skew_mat.to(original_dtype)
-        
+
     @torch.no_grad()
     def make_lambda(self, num_points: int = 1000, shrink_mat: bool = True):
         """
@@ -193,7 +197,7 @@ class FixedEmbedding(nn.Module):
             num_batch_dims = emb_vecs.ndim - 1
             emb_vecs = emb_vecs[..., None, :]
             skew_mat = self.skew_mat[(None,) * num_batch_dims]
-            emb_vecs = torch.matmul(emb_vecs, skew_mat)
+            emb_vecs = torch.matmul(emb_vecs, skew_mat.conj())
 
             # Remove extra singleton dimension
             assert emb_vecs.size(-2) == 1
@@ -223,7 +227,11 @@ class TrainableEmbedding(nn.Module):
     """
 
     def __init__(
-        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False, dtype: torch.dtype = torch.float32
+        self,
+        emb_fun: Callable,
+        data_domain: DataDomain,
+        frameify: bool = False,
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
         assert isinstance(emb_fun, nn.Module)
