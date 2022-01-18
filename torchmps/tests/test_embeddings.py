@@ -123,12 +123,14 @@ def test_frameified_embeddings(raw_embed, input_dim):
     assert allcloseish(lamb_mat, torch.eye(input_dim), tol=input_dim * 1e-2)
 
 
-@given(st.integers(1, 50))
-def test_legendre_embedding(input_dim):
+@given(st.integers(1, 50), st.booleans())
+def test_legendre_embedding(input_dim, use_emb_class):
     """
     Verify that Legendre polynomial embedding is indeed a frame
     """
     embed_fun = partial(legendre_embed, emb_dim=input_dim)
+    if use_emb_class:
+        embed_fun = FixedEmbedding(embed_fun, unit_interval, frameify=False)
 
     # Manually compute the lambda matrix for frameified embedding
     points = torch.linspace(0, 1, steps=1000)
@@ -144,15 +146,16 @@ def test_legendre_embedding(input_dim):
     "raw_embed, frameify", list(product([trig_embed, legendre_embed], [False, True]))
 )
 @settings(deadline=None)
-@given(st.integers(1, 15), st.booleans())
+# @given(st.integers(1, 15))
+# def test_normalization(raw_embed, frameify, input_dim):
+@given(st.integers(1, 12), st.booleans())
 def test_normalization(raw_embed, frameify, input_dim, complex_params):
     """
     For a 2-mode MPS, verify that probabilities integrate to 1
     """
     torch.manual_seed(0)
-    complex_params=False
     bond_dim = 10
-    num_points = 200 if raw_embed is legendre_embed else 50
+    num_points = 200
     embed_fun = FixedEmbedding(
         partial(raw_embed, emb_dim=input_dim), unit_interval, frameify=frameify
     )
@@ -166,9 +169,11 @@ def test_normalization(raw_embed, frameify, input_dim, complex_params):
 
     # Cast to double precision, since we need it for the following
     if complex_params:
-        mps.to(torch.complex128)
+        model_dtype = torch.complex128
     else:
-        mps.double()
+        model_dtype = torch.float64
+    mps.embedding.dtype = model_dtype
+    mps.to(model_dtype)
 
     # Define a 2D mesh grid covering the unit square, stack x and y coordinates
     points = torch.linspace(0, 1, num_points)
@@ -180,15 +185,7 @@ def test_normalization(raw_embed, frameify, input_dim, complex_params):
     pdf = log_pdf.exp()
     int_prob = torch.trapz(torch.trapz(pdf, points, dim=1), points, dim=0)
 
-    # try:
     assert allcloseish(int_prob, torch.ones((), dtype=int_prob.dtype), tol=1e-1)
-    # except RuntimeError:
-    #     breakpoint()
-    #     lamb_mat = mps.embedding.lamb_mat
-    #     raw_lamb_mat = mps.embedding.raw_lamb_mat
-    #     cholesky_factor = torch.linalg.cholesky(raw_lamb_mat.double()).T.conj()
-    #     skew_mat = torch.linalg.pinv(cholesky_factor)
-    #     print((skew_mat.T @ lamb_mat @ skew_mat - lamb_mat).norm())
 
 
 

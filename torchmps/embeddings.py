@@ -105,8 +105,8 @@ class FixedEmbedding(nn.Module):
         Compute skew matrix that converts embedding to a frame (when applied
         to vectors output by the raw embedding function)
 
-        This is just an inverse square root of the lambda (i.e. covariance)
-        matrix, and I use the Cholesky decomposition to compute this
+        This is just an inverse square root of the lambda, which satisfies
+        S
         """
         # Need to have the full lambda matrix
         self.make_lambda(shrink_mat=False)
@@ -118,13 +118,19 @@ class FixedEmbedding(nn.Module):
         else:
             lamb_mat = self.raw_lamb_mat.double()
 
-        # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
-        # TODO: Replace this with something using eigenvalue factorization
-        cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
-        skew_mat = torch.linalg.pinv(cholesky_factor)
+        # Skew mat can be taken as pinv of the (adjoint) Cholesky factor of lambda mat
+        try:
+            cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
+            skew_mat = torch.linalg.pinv(cholesky_factor)
+        except RuntimeError:
+            eigvals, eigvecs = torch.linalg.eigh(lamb_mat)
+            # Create pinv of square root of diagonal eigenvalue matrix
+            rinv = 1 / eigvals.sqrt()
+            rinv[eigvals < 1e-7] = 0
+            skew_mat = eigvecs @ rinv.diag() @ eigvecs.T.conj()
 
         # Unskew lambda matrix, then save matrices as initial dtypes
-        self.lamb_mat = (skew_mat.T @ lamb_mat @ skew_mat).to(original_dtype)
+        self.lamb_mat = (skew_mat.T.conj() @ lamb_mat @ skew_mat).to(original_dtype)
         self.skew_mat = skew_mat.to(original_dtype)
         
     @torch.no_grad()
@@ -138,7 +144,7 @@ class FixedEmbedding(nn.Module):
                 self.domain.min_val, self.domain.max_val, steps=num_points
             )
             self.num_points = num_points
-            emb_vecs = self.emb_fun(points)
+            emb_vecs = self.emb_fun(points).to(self.dtype)
             assert emb_vecs.ndim == 2
             self.emb_dim = emb_vecs.shape[1]
             assert emb_vecs.shape[0] == num_points
@@ -149,7 +155,7 @@ class FixedEmbedding(nn.Module):
 
         else:
             points = torch.arange(self.domain.max_val).long()
-            emb_vecs = self.emb_fun(points)
+            emb_vecs = self.emb_fun(points).to(self.dtype)
             assert emb_vecs.ndim == 2
             self.emb_dim = emb_vecs.shape[1]
             assert emb_vecs.shape[0] == self.domain.max_val
@@ -213,10 +219,11 @@ class TrainableEmbedding(nn.Module):
             the data fed to the embedding function is defined.
         frameify (bool): Whether to rescale embedding vectors to make the
             embedding function into a frame. (Default: False)
+        dtype: Datatype to save associated lambda matrix in. (Default: float32)
     """
 
     def __init__(
-        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False
+        self, emb_fun: Callable, data_domain: DataDomain, frameify: bool = False, dtype: torch.dtype = torch.float32
     ):
         super().__init__()
         assert isinstance(emb_fun, nn.Module)
@@ -225,6 +232,7 @@ class TrainableEmbedding(nn.Module):
         self.domain = data_domain
         self.frameify = frameify
         self.emb_fun = emb_fun
+        self.dtype = dtype
 
     @torch.no_grad()
     def make_skew_mat(self):
@@ -246,10 +254,16 @@ class TrainableEmbedding(nn.Module):
         else:
             lamb_mat = self.raw_lamb_mat.double()
 
-        # Skew mat is pseudoinverse of the (adjoint of) Cholesky factor of lambda mat
-        # TODO: Replace this with something using eigenvalue factorization
-        cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
-        skew_mat = torch.linalg.pinv(cholesky_factor)
+        # Skew mat can be taken as pinv of the (adjoint) Cholesky factor of lambda mat
+        try:
+            cholesky_factor = torch.linalg.cholesky(lamb_mat).T.conj()
+            skew_mat = torch.linalg.pinv(cholesky_factor)
+        except RuntimeError:
+            eigvals, eigvecs = torch.linalg.eigh(lamb_mat)
+            # Create pinv of square root of diagonal eigenvalue matrix
+            rinv = 1 / eigvals.sqrt()
+            rinv[eigvals < 1e-7] = 0
+            skew_mat = eigvecs @ rinv.diag() @ eigvecs.T.conj()
 
         # Unskew lambda matrix, then save matrices as initial dtypes
         self.lamb_mat = (skew_mat.T @ lamb_mat @ skew_mat).to(original_dtype)
@@ -265,7 +279,7 @@ class TrainableEmbedding(nn.Module):
                 self.domain.min_val, self.domain.max_val, steps=num_points
             )
             self.num_points = num_points
-            emb_vecs = self.emb_fun(points[..., None])
+            emb_vecs = self.emb_fun(points[..., None]).to(self.dtype)
             assert emb_vecs.ndim == 2
             self.emb_dim = emb_vecs.shape[1]
             assert emb_vecs.shape[0] == num_points
@@ -276,7 +290,7 @@ class TrainableEmbedding(nn.Module):
 
         else:
             points = torch.arange(self.domain.max_val).long()
-            emb_vecs = self.emb_fun(points[..., None])
+            emb_vecs = self.emb_fun(points[..., None]).to(self.dtype)
             assert emb_vecs.ndim == 2
             self.emb_dim = emb_vecs.shape[1]
             assert emb_vecs.shape[0] == self.domain.max_val
@@ -339,6 +353,7 @@ def onehot_embed(tensor, emb_dim):
     return output
 
 
+@torch.no_grad()
 def trig_embed(data, emb_dim=2):
     r"""
     Function giving embedding from powers of sine and cosine
@@ -382,6 +397,7 @@ def legendre_embed(data, emb_dim=2):
     leg_fun = partial(np.polynomial.Legendre, domain=[0.0, 1.0])
 
     emb_data = []
+    original_dtype = data.dtype
     data = data.numpy()
     base_coef = [0.0] * emb_dim
     for s in range(emb_dim):
@@ -394,7 +410,7 @@ def legendre_embed(data, emb_dim=2):
         emb_data.append(sqrt(2 * s + 1) * raw_values)
     emb_data = np.stack(emb_data, axis=-1)
     assert emb_data.shape == data.shape + (emb_dim,)
-    return torch.tensor(emb_data).float()
+    return torch.tensor(emb_data).to(original_dtype)
 
 
 def init_mlp_embed(

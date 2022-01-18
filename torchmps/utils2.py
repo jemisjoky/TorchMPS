@@ -183,7 +183,10 @@ def realify(tensor: Tensor) -> Tensor:
     Input must be approximately real, `realify` will raise error if not
     """
     if tensor.is_complex():
-        assert torch.allclose(tensor.imag, torch.zeros(()), atol=1e-4)
+        # Get corresponding real datatype for complex tensor dtype
+        assert tensor.dtype in [torch.complex128, torch.complex64]
+        dtype = torch.float64 if tensor.dtype == torch.complex128 else torch.float32
+        assert torch.allclose(tensor.imag, torch.zeros((), dtype=dtype), atol=1e-4)
         return tensor.real
     else:
         return tensor
