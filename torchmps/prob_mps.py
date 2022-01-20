@@ -186,7 +186,8 @@ class ProbMPS(nn.Module):
         else:
             # Contract inputs with core tensors and add bias matrices
             with record_function("REG_EVAL"):
-                mat_slices = get_mat_slices(input_data, self.core_tensors)
+                with record_function("REG_EVAL::MAT_SLICES"):
+                    mat_slices = get_mat_slices(input_data, self.core_tensors)
                 if self.use_bias:
                     mat_slices = mat_slices + self.bias_mat[None, None]
 

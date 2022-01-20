@@ -17,9 +17,10 @@ MNIST_SIZE = 28 ** 2
 BATCH_SIZE = 128
 NUM_BATCH = 1
 INPUT_DIM = 5
-BOND_DIM = 17
+BOND_DIM = 100
 COMPLEX = False
 JITTED = False
+TRACE_JIT = True  # Whether to use jit.trace (True) or jit.script (False)
 # EMBED_FUN = trig_embed  # Set to None for discrete modeling
 EMBED_FUN = None  # Set to None for discrete modeling
 DTYPE = torch.float32
@@ -32,7 +33,7 @@ STACK_DEPTH = 1  # Number of call frames to display
 FAKE_PROFILE = False  # Whether to run code without profiling
 PROFILE_MEMORY = True
 INCLUDE_BACKWARD = False
-SORT_ATTR = "self_cpu_time_total"
+SORT_ATTR = "cpu_time_total"
 
 
 # Function for setting derived globals
@@ -176,7 +177,7 @@ def make_stats_dict(prof, total_time):
     stats_dict["wall_clock"] = total_time
     stats_dict["self_cpu_time_total"] = av_obj.self_cpu_time_total
     stats_dict["table"] = av_obj.table(
-        sort_by="self_cpu_time_total", row_limit=30, max_src_column_width=210
+        sort_by=SORT_ATTR, row_limit=30, max_src_column_width=210
     )
 
     return stats_dict
@@ -198,7 +199,9 @@ def make_stats_dict(prof, total_time):
 
 
 @restore_config
-def compare_different_configs(global_names, config_tuples, compare_at_end=False, printed_rows=5):
+def compare_different_configs(
+    global_names, config_tuples, compare_at_end=True, printed_rows=15
+):
     """
     Profile the ProbMPS model with different experimental configurations
 
@@ -212,7 +215,14 @@ def compare_different_configs(global_names, config_tuples, compare_at_end=False,
             resultant configuration setup before returning values.
         printed_rows: The choice of rows to display if compare_tables is called.
 
+    Returns:
+        time_dict: Mapping from config tuples to config runtimes (in seconds)
+        time_dict: Mapping from config tuples to profiling tables
     """
+    # Promote singleton values to tuples, for convenience
+    if all(not isinstance(tup, (tuple, list)) for tup in config_tuples):
+        config_tuples = [(v,) for v in config_tuples]
+
     # Check that global variables are valid, config tuples have right length
     global_names = [n.upper() for n in global_names]
     assert all(n in globals() for n in global_names), global_names
@@ -229,18 +239,13 @@ def compare_different_configs(global_names, config_tuples, compare_at_end=False,
         stats_dict = make_stats_dict(*prof_out)
 
         # Condense this into total runtime and profiling table
-        time_dict[tup] = stats_dict["self_cpu_time_total"]
+        time_dict[tup] = stats_dict["self_cpu_time_total"] / 10e5
         table_dict[tup] = stats_dict["table"]
 
     if compare_at_end:
-        compare_tables(table_dict, 5, global_names)
+        compare_tables(table_dict, printed_rows, global_names)
 
     return time_dict, table_dict
-
-
-compare_jitted_vs_not = partial(
-    compare_different_configs, ["JITTED"], [(True,), (False,)], compare_at_end=True
-)
 
 
 def compare_tables(table_dict, printed_rows, key_labels):
@@ -254,7 +259,7 @@ def compare_tables(table_dict, printed_rows, key_labels):
         printed_rows: Either a name for some row in the profiling table (e.g.
             "aten::matmul"), a list of such names, or a positive integer. In
             the last case, the first k rows of the table will be displayed,
-            for k=printed_rows.
+            for k=printed_rows. Setting printed_rows=-1 will print everything.
         key_labels: List of the names to display for the config variables,
             whose length must agree with the length of the tuples used as keys
             for table_dict.
@@ -268,7 +273,8 @@ def compare_tables(table_dict, printed_rows, key_labels):
     indexing = isinstance(printed_rows, int)
     if indexing:
         num_to_take = printed_rows
-        assert num_to_take >= 0
+        if num_to_take == -1:
+            num_to_take = 10e6
     if isinstance(printed_rows, str):
         printed_rows = [printed_rows]
         indexing = False
@@ -288,20 +294,28 @@ def compare_tables(table_dict, printed_rows, key_labels):
                 print(r)
             if not indexing and any(pr in r for pr in printed_rows):
                 print(r)
+        print()
 
 
 if __name__ == "__main__":
-    # jitted = warmup = False
-
-    # prof, total_time = profile_mnist_eval(
-    #     jitted=jitted, warmup=warmup, include_backward=INCLUDE_BACKWARD
+    # # Compare different embeddings
+    # time_dict, table_dict = compare_different_configs(
+    #     ["EMBED_FUN"], [None, trig_embed, legendre_embed]
     # )
 
-    # if not FAKE_PROFILE:
-    #     print(prof.key_averages(group_by_input_shape=True).table(sort_by="self_cpu_time_total", row_limit=30))
-    #     if SAVE_TRACE:
-    #         prof.export_chrome_trace("trace.json")
+    # # Compare different evaluation methods for small bond dims
+    # time_dict, table_dict = compare_different_configs(
+    #     ["BOND_DIM", "EVAL_TYPE"], [(16, "slim"), (16, "default"), (16, "parallel")]
+    # )
 
-    # print(f"TOTAL_TIME: {total_time:.3f}s")
+    # Compare different evaluation methods for large bond dims
+    time_dict, table_dict = compare_different_configs(
+        ["BOND_DIM", "EVAL_TYPE"], [(100, "default"), (100, "slim")]
+    )
 
-    time_dict, table_dict = compare_jitted_vs_not()
+    # # Compare forward+backward passes vs. forward pass alone
+    # time_dict, table_dict = compare_different_configs(
+    #     ["INCLUDE_BACKWARD"], [True, False]
+    # )
+
+    print(time_dict)

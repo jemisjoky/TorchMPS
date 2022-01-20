@@ -102,9 +102,9 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
     log_scale = torch.zeros(batch)
     vecs = bound_vecs[0][None, None]
     for inps, core in zip(seq_input, all_cores):
-        with record_function("CORE_INPUT"):
+        with record_function("SLIM_EVAL::CORE_INPUT"):
             mats = slice_fun(inps, core)
-        with record_function("MV_SLIM"):
+        with record_function("SLIM_EVAL::MV"):
             vecs = torch.matmul(vecs, mats)
 
         # Rescale vectors, update log_scale
@@ -207,7 +207,7 @@ def contract_matseq(
 
     if use_parallel:
         # Reduce product of all matrices in parallel
-        with record_function("MAT_REDUCE_PAR"):
+        with record_function("REG_EVAL::MAT_REDUCE_PAR"):
             product, log_scale = mat_reduce_par(matrices)
 
         # Contract with boundary vectors, using intermediate dummy axes
@@ -233,7 +233,7 @@ def contract_matseq(
             matrices.append(bnd_vecs[1][..., None])
 
         # Compute product sequentially and strip away dummy dimensions
-        with record_function("MAT_REDUCE_SEQ"):
+        with record_function("REG_EVAL::MAT_REDUCE_SEQ"):
             product, log_scale = mat_reduce_seq(matrices)
 
     # Strip away dummy indices
@@ -454,7 +454,7 @@ def get_log_norm(
     # Function for applying rightward transfer operator to density mat
     def transfer_op(core_t, d_mat, l_norm, l_sum=None):
         # Update density operator, rescale to have unit trace
-        with record_function("TRANSFER_OP_EINSUM"):
+        with record_function("LOG_NORM::T_OP::EINSUM"):
             d_mat = t_op(d_mat, core_t)
         trace = hermitian_trace(d_mat)
         l_norm = l_norm + torch.log(trace)
@@ -471,7 +471,7 @@ def get_log_norm(
 
     if fixed_len:
         # Apply transfer operator `length` times, then add final correction
-        with record_function("TRANSFER_OP"):
+        with record_function("LOG_NORM::T_OP"):
             for core in core_tensor:
                 dens_mat, log_norm = transfer_op(core, dens_mat, log_norm)
 
