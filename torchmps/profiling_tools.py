@@ -16,33 +16,56 @@ from torchmps.embeddings import (
 MNIST_SIZE = 28 ** 2
 BATCH_SIZE = 128
 NUM_BATCH = 1
-# MNIST_SIZE = 28 ** 2
-# BATCH_SIZE = 128
-# NUM_BATCH = 10
 INPUT_DIM = 5
-BOND_DIM = 20
+BOND_DIM = 17
 COMPLEX = False
+JITTED = False
 # EMBED_FUN = trig_embed  # Set to None for discrete modeling
 EMBED_FUN = None  # Set to None for discrete modeling
 DTYPE = torch.float32
 EVAL_TYPE = "slim"  # Options: "slim", "default", "parallel"
 
 # Profiling parameters
-SAVE_TRACE = False      # Whether to save trace of program
-FAKE_PROFILE = False    # Whether to run code without profiling
+SAVE_TRACE = False  # Whether to save trace of program
+WITH_STACK = False  # Whether to record call stack
+STACK_DEPTH = 1  # Number of call frames to display
+FAKE_PROFILE = False  # Whether to run code without profiling
 PROFILE_MEMORY = True
 INCLUDE_BACKWARD = False
 SORT_ATTR = "self_cpu_time_total"
 
+
 # Function for setting derived globals
-def fix_globals():
+def set_derived_globals():
     global SLIM_EVAL, PARALLEL_EVAL
     assert EVAL_TYPE in ["slim", "default", "parallel"]
     SLIM_EVAL = EVAL_TYPE == "slim"
     PARALLEL_EVAL = EVAL_TYPE == "parallel"
 
 
-fix_globals()
+set_derived_globals()
+
+
+def restore_config(foo):
+    """
+    Decorator for returning global config variables to their original values
+    """
+
+    def wrapped_foo(*args, **kwargs):
+        # Save original set of configuration values
+        glob_dict = globals()
+        config_keys = [k for k in glob_dict.keys() if k.upper() == k]
+        orig_config = {k: glob_dict[k] for k in config_keys}
+
+        # Call foo, which might change these config variables
+        out = foo(*args, **kwargs)
+
+        # Return config variables to their original values
+        globals().update(orig_config)
+
+        return out
+
+    return wrapped_foo
 
 
 def init_data():
@@ -57,11 +80,11 @@ def init_data():
         return torch.rand(shape)
 
 
-def init_mps_model(jitted=False):
+def init_mps_model():
     """
     Initialize an MPS model, possibly jitted
     """
-    assert jitted == False
+    # assert JITTED is False
 
     # Get embedding function
     if EMBED_FUN is not None:
@@ -98,7 +121,7 @@ def mnist_eval(model, data, backward_pass=False):
             model.zero_grad()
 
 
-def profile_mnist_eval(jitted=False, warmup=False, include_backward=False):
+def profile_mnist_eval(warmup=False):
     """
     Compute the average time needed for batches of fake data
     """
@@ -106,14 +129,16 @@ def profile_mnist_eval(jitted=False, warmup=False, include_backward=False):
 
     # Initialize model and data to evaluate it on
     dataset = init_data()
-    model = init_mps_model(jitted=jitted)
-    eval_fun = partial(mnist_eval, backward_pass=include_backward)
+    model = init_mps_model()
+    eval_fun = partial(mnist_eval, backward_pass=INCLUDE_BACKWARD)
 
     if warmup:
         eval_fun(model, dataset)
 
     if not FAKE_PROFILE:
-        with profile(record_shapes=True, profile_memory=PROFILE_MEMORY) as prof:
+        with profile(
+            record_shapes=True, profile_memory=PROFILE_MEMORY, with_stack=WITH_STACK
+        ) as prof:
             eval_fun(model, dataset)
     else:
         eval_fun(model, dataset)
@@ -122,13 +147,14 @@ def profile_mnist_eval(jitted=False, warmup=False, include_backward=False):
     total_time = perf_counter() - start
     return prof, total_time
 
+
 def make_stats_dict(prof, total_time):
     """
     Function condensing full profile object into summarized dictionary
     """
 
     # Extract sorted event information from the profiler object
-    av_obj = prof.key_averages(group_by_input_shape=True)
+    av_obj = prof.key_averages(group_by_stack_n=STACK_DEPTH, group_by_input_shape=True)
     events = sorted(av_obj, key=lambda e: getattr(e, SORT_ATTR), reverse=True)
 
     # Build the stats dict one event at a time
@@ -138,54 +164,124 @@ def make_stats_dict(prof, total_time):
         event_dict = {}
         for a in dir(e):
             attr = getattr(e, a)
-            if a.startswith("__") or hasattr(attr, "__call__") or a in ["cpu_children", "cpu_parent", "key"]:
+            if (
+                a.startswith("__")
+                or hasattr(attr, "__call__")
+                or a in ["cpu_children", "cpu_parent", "key"]
+            ):
                 continue
             event_dict[a] = attr
         stats_dict[e.key] = event_dict
 
     stats_dict["wall_clock"] = total_time
     stats_dict["self_cpu_time_total"] = av_obj.self_cpu_time_total
-    stats_dict["table"] = av_obj.table(sort_by="self_cpu_time_total", row_limit=30)
+    stats_dict["table"] = av_obj.table(
+        sort_by="self_cpu_time_total", row_limit=30, max_src_column_width=210
+    )
 
     return stats_dict
 
 
-def compare_jitted_vs_not():
+# def compare_jitted_vs_not():
+#     """
+#     Compute the time needed for batches with jitted vs. regular ProbMPS
+#     """
+#     time_dict, table_dict = {}, {}
+#     for jitted in [False, True]:
+#         prof_out = profile_mnist_eval(warmup=True)
+#         stats_dict = make_stats_dict(*prof_out)
+
+#         time_dict[jitted] = stats_dict["self_cpu_time_total"]
+#         table_dict[jitted] = stats_dict["table"]
+
+#     return time_dict, table_dict
+
+
+@restore_config
+def compare_different_configs(global_names, config_tuples, compare_at_end=False, printed_rows=5):
     """
-    Compute the time needed for batches with jitted vs. regular ProbMPS
+    Profile the ProbMPS model with different experimental configurations
+
+    Args:
+        global_names: List of strings containing the global variable names
+            which will be varied between profiling runs (e.g. ["BOND_DIM", "COMPLEX"])
+        config_tuples: List of tuples giving the values which the global
+            variables will be set to (e.g. [(10, False), (15, True)]). The
+            length of config_tuples is the number of profiling runs
+        compare_at_end: Whether or not to run the compare_tables function on the
+            resultant configuration setup before returning values.
+        printed_rows: The choice of rows to display if compare_tables is called.
+
     """
-    times, tables = {}, {}
-    for jitted in [False, True]:
-        # prof_out = profile_mnist_eval(jitted=jitted, 
-        prof_out = profile_mnist_eval(jitted=False, warmup=True, include_backward=INCLUDE_BACKWARD)
+    # Check that global variables are valid, config tuples have right length
+    global_names = [n.upper() for n in global_names]
+    assert all(n in globals() for n in global_names), global_names
+    assert all(len(tup) == len(global_names) for tup in config_tuples)
+
+    time_dict, table_dict = {}, {}
+    for tup in config_tuples:
+        # Change the global configuration variables, update derived globals
+        globals().update({k: v for k, v in zip(global_names, tup)})
+        set_derived_globals()
+
+        # Run the experiment and summarize the profiling information
+        prof_out = profile_mnist_eval(warmup=True)
         stats_dict = make_stats_dict(*prof_out)
 
-        times[jitted] = stats_dict["self_cpu_time_total"]
-        tables[jitted] = stats_dict["table"]
+        # Condense this into total runtime and profiling table
+        time_dict[tup] = stats_dict["self_cpu_time_total"]
+        table_dict[tup] = stats_dict["table"]
 
-    return times, tables
+    if compare_at_end:
+        compare_tables(table_dict, 5, global_names)
 
-def compare_rows(tables, printed_rows=["aten::matmul"], key_label="KEY"):
+    return time_dict, table_dict
+
+
+compare_jitted_vs_not = partial(
+    compare_different_configs, ["JITTED"], [(True,), (False,)], compare_at_end=True
+)
+
+
+def compare_tables(table_dict, printed_rows, key_labels):
     """
-    Print comparison of certain rows (events) profiled for different experimental configurations
+    Print comparison of some rows profiled for different experimental configurations
+
+    Args:
+        table_dict: Dictionary generated by compare_different_configs, whose
+            keys are tuples of configuration variables and whose values are
+            profiling information for that particular configuration.
+        printed_rows: Either a name for some row in the profiling table (e.g.
+            "aten::matmul"), a list of such names, or a positive integer. In
+            the last case, the first k rows of the table will be displayed,
+            for k=printed_rows.
+        key_labels: List of the names to display for the config variables,
+            whose length must agree with the length of the tuples used as keys
+            for table_dict.
     """
-    indexing =  isinstance(printed_rows, int)
+    # Check that key_labels is in agreement with the keys of table_dict
+    if isinstance(key_labels, str):
+        key_labels = [key_labels]
+    assert all(len(tup) == len(key_labels) for tup in table_dict)
+
+    # Deal with different possible values of printed_rows
+    indexing = isinstance(printed_rows, int)
     if indexing:
         num_to_take = printed_rows
         assert num_to_take >= 0
     if isinstance(printed_rows, str):
         printed_rows = [printed_rows]
         indexing = False
-    
-    # Print table header (first three lines of table)
-    example_table = next(iter(tables.values()))
+
+    # Print table header (first three lines of every table)
+    example_table = next(iter(table_dict.values()))
     header = example_table.split("\n")[:3]
     print("\n".join(header))
 
-    # Print out the values for each row, for every config in tables
-    for key in tables:
-        print(f"{key_label} = {key}:")
-        rows = tables[key].split("\n")[3:]
+    # Print out the values for each row, for every config in table_dict
+    for tup in table_dict:
+        print(", ".join([f"{k}={v}" for k, v in zip(key_labels, tup)]) + ":")
+        rows = table_dict[tup].split("\n")[3:]
 
         for i, r in enumerate(rows):
             if indexing and i < num_to_take:
@@ -208,5 +304,4 @@ if __name__ == "__main__":
 
     # print(f"TOTAL_TIME: {total_time:.3f}s")
 
-    times, tables = compare_jitted_vs_not()
-    compare_rows(tables, 5)
+    time_dict, table_dict = compare_jitted_vs_not()
