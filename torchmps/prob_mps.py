@@ -25,6 +25,7 @@ from typing import Optional, Callable
 
 import torch
 from torch import Tensor, nn
+from torch.profiler import record_function
 
 from torchmps.mps_base import (
     contract_matseq,
@@ -176,28 +177,31 @@ class ProbMPS(nn.Module):
             input_data = input_data.to(self.core_tensors.dtype)
 
         if slim_eval:
-            if self.use_bias:
-                raise ValueError("Bias matrices not supported for slim_eval")
-            psi_vals, log_scales = slim_eval_fun(
-                input_data, self.core_tensors, self.edge_vecs
-            )
+            with record_function("SLIM_EVAL"):
+                if self.use_bias:
+                    raise ValueError("Bias matrices not supported for slim_eval")
+                psi_vals, log_scales = slim_eval_fun(
+                    input_data, self.core_tensors, self.edge_vecs
+                )
         else:
             # Contract inputs with core tensors and add bias matrices
-            mat_slices = get_mat_slices(input_data, self.core_tensors)
-            if self.use_bias:
-                mat_slices = mat_slices + self.bias_mat[None, None]
+            with record_function("REG_EVAL"):
+                mat_slices = get_mat_slices(input_data, self.core_tensors)
+                if self.use_bias:
+                    mat_slices = mat_slices + self.bias_mat[None, None]
 
-            #  Contract all bond dims to get (unnormalized) prob amplitudes
-            psi_vals, log_scales = contract_matseq(
-                mat_slices,
-                self.edge_vecs[0],
-                self.edge_vecs[1],
-                parallel_eval,
-                log_format=True,
-            )
+                #  Contract all bond dims to get (unnormalized) prob amplitudes
+                psi_vals, log_scales = contract_matseq(
+                    mat_slices,
+                    self.edge_vecs[0],
+                    self.edge_vecs[1],
+                    parallel_eval,
+                    log_format=True,
+                )
 
         # Get log normalization and check for infinities
-        log_norm = self.log_norm()
+        with record_function("LOG_NORM"):
+            log_norm = self.log_norm()
         assert log_norm.isfinite()
         assert torch.all(psi_vals.isfinite())
 
