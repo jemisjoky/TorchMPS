@@ -15,7 +15,7 @@ from torchmps.embeddings import (
 # Model and data parameters
 MNIST_SIZE = 28 ** 2
 BATCH_SIZE = 128
-NUM_BATCH = 10
+NUM_BATCH = 1
 # MNIST_SIZE = 28 ** 2
 # BATCH_SIZE = 128
 # NUM_BATCH = 10
@@ -29,9 +29,10 @@ EVAL_TYPE = "slim"  # Options: "slim", "default", "parallel"
 
 # Profiling parameters
 SAVE_TRACE = False      # Whether to save trace of program
-FAKE_PROFILE = True    # Whether to run code without profiling
+FAKE_PROFILE = False    # Whether to run code without profiling
 PROFILE_MEMORY = True
 INCLUDE_BACKWARD = False
+SORT_ATTR = "self_cpu_time_total"
 
 # Function for setting derived globals
 def fix_globals():
@@ -111,27 +112,101 @@ def profile_mnist_eval(jitted=False, warmup=False, include_backward=False):
     if warmup:
         eval_fun(model, dataset)
 
-    if FAKE_PROFILE:
-        eval_fun(model, dataset)
-        prof = None
-    else:
+    if not FAKE_PROFILE:
         with profile(record_shapes=True, profile_memory=PROFILE_MEMORY) as prof:
             eval_fun(model, dataset)
+    else:
+        eval_fun(model, dataset)
+        prof = None
 
     total_time = perf_counter() - start
     return prof, total_time
 
+def make_stats_dict(prof, total_time):
+    """
+    Function condensing full profile object into summarized dictionary
+    """
+
+    # Extract sorted event information from the profiler object
+    av_obj = prof.key_averages(group_by_input_shape=True)
+    events = sorted(av_obj, key=lambda e: getattr(e, SORT_ATTR), reverse=True)
+
+    # Build the stats dict one event at a time
+    stats_dict = {}
+    for e in events:
+        # All non-callable properties that aren't big or useless
+        event_dict = {}
+        for a in dir(e):
+            attr = getattr(e, a)
+            if a.startswith("__") or hasattr(attr, "__call__") or a in ["cpu_children", "cpu_parent", "key"]:
+                continue
+            event_dict[a] = attr
+        stats_dict[e.key] = event_dict
+
+    stats_dict["wall_clock"] = total_time
+    stats_dict["self_cpu_time_total"] = av_obj.self_cpu_time_total
+    stats_dict["table"] = av_obj.table(sort_by="self_cpu_time_total", row_limit=30)
+
+    return stats_dict
+
+
+def compare_jitted_vs_not():
+    """
+    Compute the time needed for batches with jitted vs. regular ProbMPS
+    """
+    times, tables = {}, {}
+    for jitted in [False, True]:
+        # prof_out = profile_mnist_eval(jitted=jitted, 
+        prof_out = profile_mnist_eval(jitted=False, warmup=True, include_backward=INCLUDE_BACKWARD)
+        stats_dict = make_stats_dict(*prof_out)
+
+        times[jitted] = stats_dict["self_cpu_time_total"]
+        tables[jitted] = stats_dict["table"]
+
+    return times, tables
+
+def compare_rows(tables, printed_rows=["aten::matmul"], key_label="KEY"):
+    """
+    Print comparison of certain rows (events) profiled for different experimental configurations
+    """
+    indexing =  isinstance(printed_rows, int)
+    if indexing:
+        num_to_take = printed_rows
+        assert num_to_take >= 0
+    if isinstance(printed_rows, str):
+        printed_rows = [printed_rows]
+        indexing = False
+    
+    # Print table header (first three lines of table)
+    example_table = next(iter(tables.values()))
+    header = example_table.split("\n")[:3]
+    print("\n".join(header))
+
+    # Print out the values for each row, for every config in tables
+    for key in tables:
+        print(f"{key_label} = {key}:")
+        rows = tables[key].split("\n")[3:]
+
+        for i, r in enumerate(rows):
+            if indexing and i < num_to_take:
+                print(r)
+            if not indexing and any(pr in r for pr in printed_rows):
+                print(r)
+
 
 if __name__ == "__main__":
-    jitted = warmup = False
+    # jitted = warmup = False
 
-    prof, total_time = profile_mnist_eval(
-        jitted=jitted, warmup=warmup, include_backward=INCLUDE_BACKWARD
-    )
+    # prof, total_time = profile_mnist_eval(
+    #     jitted=jitted, warmup=warmup, include_backward=INCLUDE_BACKWARD
+    # )
 
-    if not FAKE_PROFILE:
-        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=30))
-        if SAVE_TRACE:
-            prof.export_chrome_trace("trace.json")
+    # if not FAKE_PROFILE:
+    #     print(prof.key_averages(group_by_input_shape=True).table(sort_by="self_cpu_time_total", row_limit=30))
+    #     if SAVE_TRACE:
+    #         prof.export_chrome_trace("trace.json")
 
-    print(f"TOTAL_TIME: {total_time:.3f}s")
+    # print(f"TOTAL_TIME: {total_time:.3f}s")
+
+    times, tables = compare_jitted_vs_not()
+    compare_rows(tables, 5)
