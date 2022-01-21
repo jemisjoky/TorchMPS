@@ -23,6 +23,7 @@
 import warnings
 from math import sqrt
 from itertools import repeat
+from functools import partial
 from typing import Union, Sequence, Optional, Tuple
 
 import torch
@@ -41,6 +42,19 @@ from torchmps.utils2 import (
 )
 
 TensorSeq = Union[Tensor, Sequence[Tensor]]
+
+# Configurations regarding the type of einsum function used
+MIN_EINSUM = True   # Whether to avoid einsum calls as much as possible
+TORCH_EINSUM = True # Whether to use Pytorch einsum, instead of opt_einsum
+JIT_EINSUM = True   # Whether to pass einsum fun through Pytorch JIT
+
+if TORCH_EINSUM:
+    einsum = torch.einsum
+
+if JIT_EINSUM:
+    jit_decorator = torch.jit.script
+else:
+    jit_decorator = lambda f: f
 
 
 def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) -> Tensor:
@@ -90,13 +104,18 @@ def slim_eval_fun(seq_input: Tensor, core_tensor: Tensor, bound_vecs: Tensor) ->
 
     # Condition on cases of vector inputs and non-uniform MPS
     if uniform:
-        all_cores = repeat(core_tensor, seq_len)
+        all_cores = repeat(core_tensor, torch.tensor(seq_len))
     else:
         all_cores = core_tensor
     if vec_input:
-        slice_fun = lambda inps, core: einsum("bi,ide->bde", inps, core)
+        # slice_fun equivalent to einsum("bi,ide->bde", inps, core)
+        if MIN_EINSUM:
+            slice_fun = vec_input_to_trans_matrices
+        else:
+            slice_fun = vec_input_to_trans_matrices_ein
     else:
-        slice_fun = lambda inps, core: core[inps]
+        # slice_fun = lambda inps, core: core[inps]
+        slice_fun = idx_input_to_trans_matrices
 
     # Process input sequentially, from left to right
     log_scale = torch.zeros(batch)
@@ -441,15 +460,31 @@ def get_log_norm(
         core_tensor = (core_tensor,) * length
 
     # Define transfer operator function for different types of lambda matrix
+    # In the following, "dm" = "density matrix", "ct" = "core tensor"
     if lamb_mat is None:
-        # In the following, "dm" = "density matrix", "ct" = "core tensor"
-        t_op = lambda dm, ct: einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+        # t_op = lambda dm, ct: einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+        if MIN_EINSUM:
+            t_op = trans_op_step_base
+        else:
+            t_op = trans_op_step_base_ein
     elif lamb_mat.ndim == 0:
-        t_op = lambda dm, ct: lamb_mat * einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+        # t_op = lambda dm, ct: lamb_mat * einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+        if MIN_EINSUM:
+            t_op = partial(trans_op_step_lamb0, lamb_mat)
+        else:
+            t_op = partial(trans_op_step_lamb0_ein, lamb_mat)
     elif lamb_mat.ndim == 1:
-        t_op = lambda dm, ct: einsum("i,ilr,lp,ipq->rq", lamb_mat, ct, dm, ct.conj())
+        # t_op = lambda dm, ct: einsum("i,ilr,lp,ipq->rq", lamb_mat, ct, dm, ct.conj())
+        if MIN_EINSUM:
+            t_op = partial(trans_op_step_lamb1, lamb_mat)
+        else:
+            t_op = partial(trans_op_step_lamb1_ein, lamb_mat)
     elif lamb_mat.ndim == 2:
-        t_op = lambda dm, ct: einsum("ij,ilr,lp,jpq->rq", lamb_mat, ct, dm, ct.conj())
+        # t_op = lambda dm, ct: einsum("ij,ilr,lp,jpq->rq", lamb_mat, ct, dm, ct.conj())
+        if MIN_EINSUM:
+            t_op = partial(trans_op_step_lamb2, lamb_mat)
+        else:
+            t_op = partial(trans_op_step_lamb2_ein, lamb_mat)
 
     # Function for applying rightward transfer operator to density mat
     def transfer_op(core_t, d_mat, l_norm, l_sum=None):
@@ -564,3 +599,101 @@ def normal_init(shape: tuple, is_complex: bool = False, rel_std: float = 1.0) ->
     if is_complex:
         core_tensor = phaseify(core_tensor)
     return core_tensor
+
+
+### SPECIFIC FUNCTIONS FOR EINSUM-STYLE OPERATIONS ###
+
+
+def vec_input_to_trans_matrices_ein(inps, core):
+    return einsum("bi,ide->bde", inps, core)
+
+
+@jit_decorator
+def vec_input_to_trans_matrices(inps, core):
+    # return einsum("bi,ide->bde", inps, core)
+    d0, d1, d2 = core.shape
+    d12 = d1 * d2
+    out_shape = (inps.shape[0], d1, d2)
+    return (inps @ core.reshape(d0, d12)).reshape(out_shape)
+
+
+def idx_input_to_trans_matrices(inps, core):
+    return core[inps]
+
+
+def trans_op_step_base_ein(dm, ct):
+    return einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+
+
+@jit_decorator
+def trans_op_step_base(dm, ct):
+    # einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+    d0, d1, d2 = ct.shape
+    d20 = d2 * d0
+    d01 = d0 * d1
+    # ct: ilr -> tens1: (ri)l
+    tens1 = ct.permute(2, 0, 1).reshape(d20, d1)
+    # tens2: (ri)p
+    tens2 = torch.matmul(tens1, dm)
+    # tens3: r(ip)
+    tens3 = tens1.reshape(d2, d01)
+    # output: rq
+    return torch.matmul(tens3, ct.conj().reshape(d01, d2))
+
+
+def trans_op_step_lamb0_ein(lm, dm, ct):
+    return lm * einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+
+
+@jit_decorator
+def trans_op_step_lamb0(lm, dm, ct):
+    # lm * einsum("ilr,lp,ipq->rq", ct, dm, ct.conj())
+    tens1 = trans_op_step_base(dm, ct)
+    return lm * tens1
+
+
+def trans_op_step_lamb1_ein(lm, dm, ct):
+    return einsum("i,ilr,lp,ipq->rq", lm, ct, dm, ct.conj())
+
+
+@jit_decorator
+def trans_op_step_lamb1(lm, dm, ct):
+    # einsum("i,ilr,lp,ipq->rq", lm, ct, dm, ct.conj())
+    d0, d1, d2 = ct.shape
+    d20 = d2 * d0
+    d01 = d0 * d1
+    # ct: ilr, lm: i -> tens0: ilr
+    tens0 = ct * lm[:, None, None]
+    # tens1: (ri)l
+    tens1 = ct.permute(2, 0, 1).reshape(d20, d1)
+    # tens2: (ri)p
+    tens2 = torch.matmul(tens1, dm)
+    # tens3: r(ip)
+    tens3 = tens1.reshape(d2, d01)
+    # output: rq
+    return torch.matmul(tens3, ct.conj().reshape(d01, d2))
+
+
+def trans_op_step_lamb2_ein(lm, dm, ct):
+    return einsum("ij,ilr,lp,jpq->rq", lm, ct, dm, ct.conj())
+
+
+@jit_decorator
+def trans_op_step_lamb2(lm, dm, ct):
+    # einsum("ij,ilr,lp,jpq->rq", lm, ct, dm, ct.conj())
+    d0, d1, d2 = ct.shape
+    d20 = d2 * d0
+    d01 = d0 * d1
+    d12 = d1 * d2
+    # ct: ilr -> tens1: (ri)l
+    tens1 = ct.permute(2, 0, 1).reshape(d20, d1)
+    # tens2: (ri)p
+    tens2 = torch.matmul(tens1, dm)
+    # tens3: r(ip)
+    tens3 = tens1.reshape(d2, d01)
+    # ct.conj(): jpq, lm: ij -> tens4: i(pq)
+    tens4 = torch.matmul(lm, ct.conj().reshape(d0, d12))
+    # tens5: (ip)q
+    tens5 = tens4.reshape(d01, d2)
+    # output: rq
+    return torch.matmul(tens3, tens5)

@@ -1,3 +1,4 @@
+from types import MethodType
 from time import perf_counter
 from functools import partial
 
@@ -27,6 +28,7 @@ DTYPE = torch.float32
 EVAL_TYPE = "slim"  # Options: "slim", "default", "parallel"
 
 # Profiling parameters
+WARMUP = True  # Whether to run initial warmup before profiling
 SAVE_TRACE = False  # Whether to save trace of program
 WITH_STACK = False  # Whether to record call stack
 STACK_DEPTH = 1  # Number of call frames to display
@@ -83,10 +85,8 @@ def init_data():
 
 def init_mps_model():
     """
-    Initialize an MPS model, possibly jitted
+    Initialize an MPS model
     """
-    # assert JITTED is False
-
     # Get embedding function
     if EMBED_FUN is not None:
         raw_embed = partial(EMBED_FUN, emb_dim=INPUT_DIM)
@@ -102,8 +102,6 @@ def init_mps_model():
         complex_params=COMPLEX,
     )
     mps = mps.to(DTYPE)
-
-    # TODO: JIT stuff
 
     return mps
 
@@ -121,8 +119,11 @@ def mnist_eval(model, data, backward_pass=False):
                 loss.backward()
             model.zero_grad()
 
+        # If it isn't already, this should force memory to be cleared
+        del loss
 
-def profile_mnist_eval(warmup=False):
+
+def profile_mnist_eval():
     """
     Compute the average time needed for batches of fake data
     """
@@ -133,7 +134,7 @@ def profile_mnist_eval(warmup=False):
     model = init_mps_model()
     eval_fun = partial(mnist_eval, backward_pass=INCLUDE_BACKWARD)
 
-    if warmup:
+    if WARMUP:
         eval_fun(model, dataset)
 
     if not FAKE_PROFILE:
@@ -183,21 +184,6 @@ def make_stats_dict(prof, total_time):
     return stats_dict
 
 
-# def compare_jitted_vs_not():
-#     """
-#     Compute the time needed for batches with jitted vs. regular ProbMPS
-#     """
-#     time_dict, table_dict = {}, {}
-#     for jitted in [False, True]:
-#         prof_out = profile_mnist_eval(warmup=True)
-#         stats_dict = make_stats_dict(*prof_out)
-
-#         time_dict[jitted] = stats_dict["self_cpu_time_total"]
-#         table_dict[jitted] = stats_dict["table"]
-
-#     return time_dict, table_dict
-
-
 @restore_config
 def compare_different_configs(
     global_names, config_tuples, compare_at_end=True, printed_rows=15
@@ -235,7 +221,7 @@ def compare_different_configs(
         set_derived_globals()
 
         # Run the experiment and summarize the profiling information
-        prof_out = profile_mnist_eval(warmup=True)
+        prof_out = profile_mnist_eval()
         stats_dict = make_stats_dict(*prof_out)
 
         # Condense this into total runtime and profiling table
@@ -303,19 +289,36 @@ if __name__ == "__main__":
     #     ["EMBED_FUN"], [None, trig_embed, legendre_embed]
     # )
 
-    # # Compare different evaluation methods for small bond dims
+    # Compare different evaluation methods for small bond dims
+    time_dict, table_dict = compare_different_configs(
+        ["BOND_DIM", "EVAL_TYPE"], [(16, "slim"), (16, "default"), (16, "parallel")]
+    )
+
+    # # Single reference evaluation
     # time_dict, table_dict = compare_different_configs(
-    #     ["BOND_DIM", "EVAL_TYPE"], [(16, "slim"), (16, "default"), (16, "parallel")]
+    #     ["BOND_DIM", "EVAL_TYPE", "EMBED_FUN"],
+    #     [(50, "slim", trig_embed)],
+    #     printed_rows=["LOG_NORM", "SLIM_EVAL"],
     # )
 
-    # Compare different evaluation methods for large bond dims
-    time_dict, table_dict = compare_different_configs(
-        ["BOND_DIM", "EVAL_TYPE"], [(100, "default"), (100, "slim")]
-    )
+    # # Compare different evaluation methods for large bond dims
+    # time_dict, table_dict = compare_different_configs(
+    #     ["BOND_DIM", "EVAL_TYPE"], [(100, "default"), (100, "slim")]
+    # )
 
     # # Compare forward+backward passes vs. forward pass alone
     # time_dict, table_dict = compare_different_configs(
-    #     ["INCLUDE_BACKWARD"], [True, False]
+    #     ["BOND_DIM", "INCLUDE_BACKWARD"], [(64, True), (64, False)]
     # )
 
-    print(time_dict)
+    # # Compare variously jitted vs. unjitted version of ProbMPS
+    # time_dict, table_dict = compare_different_configs(
+    #     ["BOND_DIM", "JITTED", "TRACE_JIT"], [(10, True, True), (10, True, False), (10, False, None)]
+    # )
+
+    from torchmps.mps_base import MIN_EINSUM, TORCH_EINSUM, JIT_EINSUM
+
+    print(
+        f"MIN_EINSUM={MIN_EINSUM}, TORCH_EINSUM={TORCH_EINSUM}, JIT_EINSUM={JIT_EINSUM}"
+    )
+    print({k: v / NUM_BATCH for (k, v) in time_dict.items()})
