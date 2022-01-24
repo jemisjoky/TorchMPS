@@ -44,9 +44,9 @@ from torchmps.utils2 import (
 TensorSeq = Union[Tensor, Sequence[Tensor]]
 
 # Configurations regarding the type of einsum function used
-MIN_EINSUM = True   # Whether to avoid einsum calls as much as possible
-TORCH_EINSUM = True # Whether to use Pytorch einsum, instead of opt_einsum
-JIT_EINSUM = True   # Whether to pass einsum fun through Pytorch JIT
+MIN_EINSUM = True  # Whether to avoid einsum calls as much as possible
+TORCH_EINSUM = True  # Whether to use Pytorch einsum, instead of opt_einsum
+JIT_EINSUM = True  # Whether to pass einsum fun through Pytorch JIT
 
 if TORCH_EINSUM:
     einsum = torch.einsum
@@ -518,6 +518,57 @@ def get_log_norm(
         # TODO: Deal with the more intricate arbitrary-len calculation
         # log_sum = torch.tensor(-float("inf"))
         # Use transfer_op with log_sum argument, iterate until convergence
+
+
+@torch.no_grad()
+def canonicalize(core_tensors, edge_vecs):
+    """
+    Use left-to-right sweep to canonicalize MPS core tensors and edge vectors
+
+    Note that the post-canonicalization MPS will always have near-unit 2-norm,
+    so this function should only be called on probabilistic MPS, for which
+    such rescalings don't impact the associated probability
+
+    This function assumes a non-uniform MPS with uniform bond dimensions
+    """
+    # Inspect input
+    core_shape, vec_shape = core_tensors.shape[1:], edge_vecs.shape
+    assert len(core_shape) == 3
+    assert len(vec_shape) == 2
+    assert core_shape[1] == core_shape[2] == vec_shape[1]
+    assert vec_shape[0] == 2
+    in_dim, bond_dim = core_shape[:2]
+    big_dim, small_dim = in_dim * bond_dim, bond_dim
+
+    # Carry out canonicalization with higher-precision floats
+    orig_dtype = core_tensors.dtype
+    big_dtype = torch.complex128 if core_tensors.is_complex() else torch.float64
+    core_tensors, edge_vecs = core_tensors.to(big_dtype), edge_vecs.to(big_dtype)
+
+    # Make left edge vector a unit vector
+    left_vec, right_vec = edge_vecs
+    l_norm = left_vec.norm()
+    left_vec, core_tensors[0] = left_vec / l_norm, core_tensors[0] * l_norm
+
+    # Canonicalize each core tensor in order
+    new_cores = []
+    for i, core in enumerate(core_tensors):
+        # Incorporate prior R matrix into next core tensor
+        if i > 0:
+            core = torch.einsum("ab,ibc->iac", res_mat, core)
+
+        # Perform QR decomposition and rescale R matrix
+        orth_core, res_mat = torch.linalg.qr(core.reshape(big_dim, small_dim))
+        new_cores.append(orth_core.reshape(core_shape))
+        res_mat /= res_mat.norm() / bond_dim
+
+    # Incorporate last R matrix into right edge vector, rescale
+    right_vec = torch.einsum("ab,b->a", res_mat, right_vec)
+    right_vec /= right_vec.norm()
+
+    core_tensors = torch.stack(new_cores).to(orig_dtype)
+    edge_vecs = torch.stack([left_vec, right_vec]).to(orig_dtype)
+    return core_tensors, edge_vecs
 
 
 # TODO: Complete this after variable-len data format is better figured out

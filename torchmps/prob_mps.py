@@ -34,6 +34,7 @@ from torchmps.mps_base import (
     get_mat_slices,
     get_log_norm,
     slim_eval_fun,
+    canonicalize,
 )
 from torchmps.utils2 import phaseify
 from torchmps.embeddings import DataDomain, FixedEmbedding, TrainableEmbedding
@@ -265,6 +266,19 @@ class ProbMPS(nn.Module):
             lamb_mat = self.embedding.lamb_mat.to(self.core_tensors.dtype)
 
         return get_log_norm(core_tensors, self.edge_vecs, lamb_mat=lamb_mat)
+
+    def canonicalize(self, optimizer=None):
+        """
+        Refactor the MPS core tensors and edge vectors to be in canonical form
+        """
+        # Canonicalize the core tensors
+        state_dict = self.state_dict()
+        core_tensors, edge_vecs = canonicalize(
+            state_dict["core_tensors"], state_dict["edge_vecs"]
+        )
+        state_dict["core_tensors"] = core_tensors
+        state_dict["edge_vecs"] = edge_vecs
+        self.load_state_dict(state_dict)
 
     @property
     def seq_len(self):
