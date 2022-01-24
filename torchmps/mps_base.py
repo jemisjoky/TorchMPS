@@ -687,7 +687,7 @@ def trans_op_step_base(dm, ct):
     # tens2: (ri)p
     tens2 = torch.matmul(tens1, dm)
     # tens3: r(ip)
-    tens3 = tens1.reshape(d2, d01)
+    tens3 = tens2.reshape(d2, d01)
     # output: rq
     return torch.matmul(tens3, ct.conj().reshape(d01, d2))
 
@@ -716,11 +716,11 @@ def trans_op_step_lamb1(lm, dm, ct):
     # ct: ilr, lm: i -> tens0: ilr
     tens0 = ct * lm[:, None, None]
     # tens1: (ri)l
-    tens1 = ct.permute(2, 0, 1).reshape(d20, d1)
+    tens1 = tens0.permute(2, 0, 1).reshape(d20, d1)
     # tens2: (ri)p
     tens2 = torch.matmul(tens1, dm)
     # tens3: r(ip)
-    tens3 = tens1.reshape(d2, d01)
+    tens3 = tens2.reshape(d2, d01)
     # output: rq
     return torch.matmul(tens3, ct.conj().reshape(d01, d2))
 
@@ -741,7 +741,7 @@ def trans_op_step_lamb2(lm, dm, ct):
     # tens2: (ri)p
     tens2 = torch.matmul(tens1, dm)
     # tens3: r(ip)
-    tens3 = tens1.reshape(d2, d01)
+    tens3 = tens2.reshape(d2, d01)
     # ct.conj(): jpq, lm: ij -> tens4: i(pq)
     tens4 = torch.matmul(lm, ct.conj().reshape(d0, d12))
     # tens5: (ip)q
